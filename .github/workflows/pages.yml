@@ -1,5 +1,8 @@
 name: site
 
+# Publie le dossier site/ sur la branche gh-pages, que GitHub Pages sert sur news.zimb.app.
+# (Le déploiement par artefact actions/deploy-pages échouait de façon répétée côté GitHub.)
+
 on:
   push:
     branches: [main]
@@ -7,25 +10,29 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
-  id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
         with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v5
+          fetch-depth: 0
+
+      - name: Copier site/ sur la branche gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git subtree split --prefix site -b gh-pages-new
+          git push -f origin gh-pages-new:gh-pages
+
+      - name: Demander la reconstruction de GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" --jq .status
