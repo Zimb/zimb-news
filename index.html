@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zimb News</title>
 <meta name="description" content="Les histoires dont la presse francophone parle le plus, suivies et résumées par IA, mises à jour toutes les 15 minutes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&family=UnifrakturMaguntia&display=swap">
+<script>
+  // Applique le skin avant le premier affichage (évite un flash de la version moderne)
+  (function () {
+    var q = new URLSearchParams(location.search).get("skin"), s = null;
+    try { s = localStorage.getItem("skin"); } catch (e) {}
+    document.documentElement.dataset.skin = (q === "journal" || q === "classic") ? q : (s === "journal" ? "journal" : "classic");
+  })();
+</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23c2410c'/><path d='M9 10h14L9 22h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
   :root {
@@ -96,22 +107,162 @@
     .rank { grid-row: auto; font-size: 18px; }
     .more { grid-column: 1; }
   }
+
+  /* ---------------------------------------------------------------- Commun aux deux skins */
+  #paper { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; display: none; }
+  .wrap { position: relative; z-index: 1; }
+  .ear, .dateline { display: none; }
+  .skin-toggle {
+    border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+    border-radius: 999px; padding: 4px 12px; font: 500 13px/1.4 inherit; cursor: pointer;
+  }
+  .skin-toggle:hover { color: var(--text); }
+  header .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+  /* ---------------------------------------------------------------- Skin « vieux journal » */
+  /* html:root : plus spécifique que les règles du mode sombre, le papier reste clair */
+  html:root[data-skin="journal"] {
+    --bg: #e9dcc0; --surface: transparent; --text: #1d1712; --muted: #4f4234; --line: #1d1712;
+    --accent: #8b1a1a; --accent-soft: transparent; --chip: transparent;
+    --new-bg: transparent; --new-fg: #8b1a1a; --upd-bg: transparent; --upd-fg: #8b1a1a;
+    color-scheme: light;
+  }
+  html[data-skin="journal"] body {
+    background: #e9dcc0;
+    font: 16px/1.5 "Old Standard TT", Georgia, "Times New Roman", serif;
+    color: var(--text);
+  }
+  html[data-skin="journal"] #paper { display: block; }
+  html[data-skin="journal"] .wrap {
+    max-width: 1120px; padding: 28px 28px 72px;
+    mix-blend-mode: multiply;                       /* l'encre se fond dans le papier */
+    text-shadow: 0 0 0.6px rgba(29, 23, 18, 0.55);  /* léger bavé d'impression */
+  }
+
+  /* Manchette */
+  html[data-skin="journal"] header {
+    display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; gap: 6px; width: 100%;
+  }
+  html[data-skin="journal"] .ear {
+    display: block; font: italic 13px/1.2 "Old Standard TT", serif; color: var(--muted); letter-spacing: 0.05em;
+  }
+  html[data-skin="journal"] h1 {
+    font: 400 clamp(52px, 10vw, 108px)/0.95 "UnifrakturMaguntia", "Old English Text MT", serif;
+    letter-spacing: 0; padding: 4px 0 10px;
+  }
+  html[data-skin="journal"] h1 span { color: inherit; }
+  html[data-skin="journal"] .dateline {
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; width: 100%;
+    border-top: 3px double var(--line); border-bottom: 1px solid var(--line);
+    padding: 6px 2px; font: 700 12px/1.3 "Old Standard TT", serif; text-transform: uppercase; letter-spacing: 0.12em;
+  }
+  html[data-skin="journal"] header .right { justify-content: center; }
+  html[data-skin="journal"] .status { font-style: italic; color: var(--muted); }
+  html[data-skin="journal"] .dot { display: none; }
+  html[data-skin="journal"] .skin-toggle {
+    border: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--text);
+    font: italic 13px/1.4 "Old Standard TT", serif;
+  }
+  html[data-skin="journal"] .lede {
+    text-align: center; font-style: italic; font-size: 17px; color: var(--muted);
+    margin: 14px auto 26px; max-width: 640px;
+  }
+
+  /* Titres de rubrique : texte encadré de filets */
+  html[data-skin="journal"] .section-title {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px;
+    font: 700 15px/1.2 "Playfair Display", Georgia, serif; letter-spacing: 0.22em; color: var(--text);
+    margin: 34px 0 18px;
+  }
+  html[data-skin="journal"] .section-title::before,
+  html[data-skin="journal"] .section-title::after { content: ""; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); height: 3px; }
+  html[data-skin="journal"] .section-title span + span { display: none; }
+
+  /* À la une : colonnes séparées par des filets */
+  html[data-skin="journal"] #top { display: block; columns: 3 250px; column-gap: 30px; column-rule: 1px solid rgba(29, 23, 18, 0.55); }
+  html[data-skin="journal"] .story {
+    display: block; background: none; border: 0; border-radius: 0; box-shadow: none;
+    padding: 0 0 14px; margin: 0 0 14px; border-bottom: 1px solid rgba(29, 23, 18, 0.45);
+    break-inside: avoid;
+  }
+  html[data-skin="journal"] .rank { display: none; }
+  html[data-skin="journal"] h2 { font: 700 21px/1.15 "Playfair Display", Georgia, serif; margin: 4px 0 6px; }
+  html[data-skin="journal"] .summary { text-align: justify; hyphens: auto; -webkit-hyphens: auto; font-size: 16px; line-height: 1.5; }
+  html[data-skin="journal"] .meta { font-style: italic; font-size: 12.5px; color: var(--muted); }
+  html[data-skin="journal"] .cat {
+    padding: 0; border-radius: 0; color: var(--accent); font: 700 11px/1.3 "Old Standard TT", serif;
+    text-transform: uppercase; letter-spacing: 0.16em; font-style: normal;
+  }
+  html[data-skin="journal"] .badge {
+    border: 1.5px solid var(--accent); border-radius: 2px; padding: 0 6px; transform: rotate(-2.5deg);
+    font: 700 10px/1.5 "Old Standard TT", serif; text-transform: uppercase; letter-spacing: 0.14em; font-style: normal;
+  }
+  html[data-skin="journal"] .since { font-style: italic; font-size: 13px; }
+  html[data-skin="journal"] .more { font-size: 13px; gap: 14px; }
+  html[data-skin="journal"] summary { font-style: italic; color: var(--muted); }
+  html[data-skin="journal"] .sources .d { border: 1px solid rgba(29, 23, 18, 0.4); border-radius: 0; font-variant: small-caps; }
+  html[data-skin="journal"] .versions li { border-left: 2px solid rgba(29, 23, 18, 0.5); }
+
+  /* Article principal : pleine largeur, lettrine */
+  html[data-skin="journal"] #top .story:first-child {
+    column-span: all; text-align: center; border-bottom: 3px double var(--line); padding-bottom: 20px; margin-bottom: 18px;
+  }
+  html[data-skin="journal"] #top .story:first-child h2 { font: 900 clamp(30px, 5.2vw, 56px)/1.04 "Playfair Display", Georgia, serif; margin: 8px 0 14px; }
+  html[data-skin="journal"] #top .story:first-child .meta,
+  html[data-skin="journal"] #top .story:first-child .more { justify-content: center; }
+  html[data-skin="journal"] #top .story:first-child .summary {
+    text-align: justify; columns: 2 280px; column-gap: 30px; font-size: 18px; max-width: 900px; margin: 0 auto;
+  }
+  html[data-skin="journal"] #top .story:first-child .summary::first-letter {
+    float: left; font: 900 66px/0.82 "Playfair Display", Georgia, serif; padding: 6px 8px 0 0;
+  }
+
+  /* Brèves et archives */
+  html[data-skin="journal"] #feed { columns: 3 230px; column-gap: 30px; column-rule: 1px solid rgba(29, 23, 18, 0.4); }
+  html[data-skin="journal"] #feed ol { display: block; }
+  html[data-skin="journal"] .day {
+    column-span: all; text-align: center; font: italic 700 15px/1.2 "Old Standard TT", serif;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 4px 0; margin: 10px 0 16px;
+  }
+  html[data-skin="journal"] .compact h2 { font-size: 17px; }
+  html[data-skin="journal"] .compact .summary { font-size: 14.5px; }
+
+  html[data-skin="journal"] .empty, html[data-skin="journal"] .error { border: 1px solid var(--line); border-radius: 0; font-style: italic; }
+  html[data-skin="journal"] .skeleton {
+    border: 0; border-radius: 0; height: 110px; animation: none;
+    background: repeating-linear-gradient(transparent 0 12px, rgba(29, 23, 18, 0.12) 12px 20px);
+  }
+  html[data-skin="journal"] .loader { font-style: italic; }
+  html[data-skin="journal"] .fresh { border-radius: 0; background: var(--text); color: #efe6d0; font-family: "Old Standard TT", serif; mix-blend-mode: normal; }
+  html[data-skin="journal"] footer {
+    text-align: center; font-style: italic; border-top: 3px double var(--line); padding-top: 14px; max-width: 820px; margin: 44px auto 0;
+  }
+  @media (max-width: 600px) {
+    html[data-skin="journal"] .wrap { padding: 20px 16px 56px; }
+    html[data-skin="journal"] .dateline { justify-content: center; }
+  }
 </style>
 </head>
 <body>
+<canvas id="paper" aria-hidden="true"></canvas>
 <div class="wrap">
   <header>
+    <div class="ear">« Toute l'actualité qui fait parler, tous les quarts d'heure »</div>
     <h1>Zimb <span>News</span></h1>
-    <div class="status" id="status"><span class="dot"></span><span>Chargement…</span></div>
+    <div class="dateline"><span id="edition"></span><span>Paraît toutes les 15 minutes · Gratuit</span></div>
+    <div class="right">
+      <div class="status" id="status"><span class="dot"></span><span>Chargement…</span></div>
+      <button class="skin-toggle" id="skin" type="button"></button>
+    </div>
   </header>
   <p class="lede">Les histoires dont la presse francophone parle le plus, suivies et résumées par IA. Mis à jour toutes les 15 minutes.</p>
 
-  <h2 class="section-title"><span>En ce moment</span><span>3 dernières heures</span></h2>
+  <h2 class="section-title"><span id="t-top">En ce moment</span><span>3 dernières heures</span></h2>
   <ol id="top" aria-live="polite">
     <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
   </ol>
 
-  <h2 class="section-title"><span>Autres histoires</span><span>de la plus récente à la plus ancienne</span></h2>
+  <h2 class="section-title"><span id="t-feed">Autres histoires</span><span>de la plus récente à la plus ancienne</span></h2>
   <button class="fresh" id="fresh" type="button"></button>
   <div id="feed"></div>
   <div id="sentinel"></div>
@@ -347,6 +498,171 @@
     loadMore();
     $feed.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+
+  // ---------------------------------------------------------------- Skin « vieux journal » (three.js)
+  const THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+  const PAPER_VERTEX = /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+  `;
+
+  // Papier vieilli procédural : teinte jaunie, fibres, grain, taches de rousseur,
+  // bords brunis et deux plis qui accrochent la lumière (qui suit la souris)
+  const PAPER_FRAGMENT = /* glsl */ `
+    precision highp float;
+    uniform vec2 uRes;      // taille en pixels
+    uniform vec2 uMouse;    // position de la lampe (0..1)
+    uniform float uSeed;
+    varying vec2 vUv;
+
+    float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                 mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm(vec2 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + 11.7; a *= 0.5; }
+      return v;
+    }
+
+    void main() {
+      vec2 px = vUv * uRes;
+      vec2 p = px / min(uRes.x, uRes.y);
+      float aspect = uRes.x / uRes.y;
+
+      // Teinte de base et jaunissement irrégulier
+      vec3 paper = vec3(0.93, 0.89, 0.79);
+      float tone = fbm(p * 1.6 + uSeed);
+      paper = mix(paper, vec3(0.85, 0.76, 0.60), smoothstep(0.35, 0.85, tone) * 0.6);
+
+      // Fibres (bruit étiré) et grain fin
+      float fib = fbm(vec2(px.x * 0.012, px.y * 0.0018) * 40.0 + uSeed * 3.0);
+      paper -= (fib - 0.5) * 0.045;
+      paper -= (hash(floor(px * 0.7)) - 0.5) * 0.04;
+
+      // Taches de rousseur (foxing)
+      float fox = fbm(p * 7.0 + 17.0 + uSeed);
+      paper = mix(paper, vec3(0.60, 0.43, 0.24), smoothstep(0.70, 0.79, fox) * 0.30);
+      float fox2 = fbm(p * 22.0 + 3.0 + uSeed);
+      paper = mix(paper, vec3(0.55, 0.38, 0.20), smoothstep(0.76, 0.82, fox2) * 0.22);
+
+      // Bords brunis, irréguliers
+      vec2 c = abs(vUv - 0.5) * 2.0;
+      float edge = max(c.x, c.y) + (fbm(p * 5.0 + uSeed) - 0.5) * 0.18;
+      paper = mix(paper, vec3(0.52, 0.37, 0.20), smoothstep(0.80, 1.05, edge) * 0.65);
+      paper *= 1.0 - 0.10 * smoothstep(0.55, 1.1, length((vUv - 0.5) * vec2(aspect, 1.0)));
+
+      // Plis : un vertical au centre, un horizontal un peu au-dessus du milieu
+      float dx = (vUv.x - 0.5) * uRes.x;
+      float dy = (vUv.y - 0.56) * uRes.y;
+      float s = uRes.y / 900.0;                                // échelle selon l'écran
+      vec2 tilt = vec2(sign(dx) * exp(-abs(dx) / (70.0 * s)),  // pente de la feuille de part et d'autre du pli
+                       sign(dy) * exp(-abs(dy) / (70.0 * s)));
+      vec2 toLamp = normalize((uMouse - vUv) * vec2(aspect, 1.0) + 1e-4);
+      paper += dot(tilt, toLamp) * 0.07;
+      float line = exp(-abs(dx) / (1.6 * s)) + exp(-abs(dy) / (1.6 * s));   // trait sombre du pli
+      float lip  = exp(-abs(dx - 3.0 * s) / (1.5 * s)) + exp(-abs(dy + 3.0 * s) / (1.5 * s)); // arête claire
+      paper -= line * 0.10;
+      paper += lip * 0.035;
+
+      // Lampe : éclairage doux autour de la souris
+      float d = distance(vUv * vec2(aspect, 1.0), uMouse * vec2(aspect, 1.0));
+      paper *= 0.94 + 0.09 * exp(-d * 1.4);
+
+      gl_FragColor = vec4(clamp(paper, 0.0, 1.0), 1.0);
+    }
+  `;
+
+  let paper = null, paperStarting = false;
+
+  async function startPaper() {
+    if (paper || paperStarting) return;
+    paperStarting = true;
+    try {
+      const THREE = await import(THREE_URL);
+      if (document.documentElement.dataset.skin !== "journal") return;
+      const canvas = $("paper");
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "low-power" });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const uniforms = {
+        uRes: { value: new THREE.Vector2(1, 1) },
+        uMouse: { value: new THREE.Vector2(0.3, 0.8) },
+        uSeed: { value: 1 + Math.random() * 9 },
+      };
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({ uniforms, vertexShader: PAPER_VERTEX, fragmentShader: PAPER_FRAGMENT }),
+      );
+      scene.add(mesh);
+
+      // Rendu à la demande : uniquement quand la lampe bouge ou que la fenêtre change
+      const target = uniforms.uMouse.value.clone();
+      let raf = 0;
+      const frame = () => {
+        raf = 0;
+        uniforms.uMouse.value.lerp(target, 0.12);
+        renderer.render(scene, camera);
+        if (uniforms.uMouse.value.distanceTo(target) > 0.002) raf = requestAnimationFrame(frame);
+      };
+      const kick = () => { if (!raf) raf = requestAnimationFrame(frame); };
+      const resize = () => {
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+        renderer.getDrawingBufferSize(uniforms.uRes.value);
+        kick();
+      };
+      const move = (e) => { target.set(e.clientX / window.innerWidth, 1 - e.clientY / window.innerHeight); kick(); };
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      window.addEventListener("resize", resize);
+      if (!still) window.addEventListener("pointermove", move, { passive: true });
+      resize();
+
+      paper = {
+        stop() {
+          window.removeEventListener("resize", resize);
+          window.removeEventListener("pointermove", move);
+          cancelAnimationFrame(raf);
+          mesh.geometry.dispose();
+          mesh.material.dispose();
+          renderer.dispose();
+        },
+      };
+    } catch (e) {
+      console.warn("Papier three.js indisponible, fond uni utilisé.", e);
+    } finally {
+      paperStarting = false;
+    }
+  }
+
+  function stopPaper() { if (paper) { paper.stop(); paper = null; } }
+
+  const LABELS = {
+    classic: { top: "En ce moment", feed: "Autres histoires", button: "🗞 Version journal" },
+    journal: { top: "À LA UNE", feed: "BRÈVES & ARCHIVES", button: "Version moderne" },
+  };
+
+  function applySkin(name) {
+    document.documentElement.dataset.skin = name;
+    try { localStorage.setItem("skin", name); } catch { /* stockage indisponible */ }
+    const l = LABELS[name];
+    $("t-top").textContent = l.top;
+    $("t-feed").textContent = l.feed;
+    $("skin").textContent = l.button;
+    const edition = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    $("edition").textContent = `Édition du ${edition}`;
+    if (name === "journal") startPaper(); else stopPaper();
+  }
+
+  $("skin").addEventListener("click", () => {
+    applySkin(document.documentElement.dataset.skin === "journal" ? "classic" : "journal");
+  });
+  applySkin(document.documentElement.dataset.skin === "journal" ? "journal" : "classic");
 
   // Le fil attend le classement, pour savoir quelles histoires exclure
   loadTop().finally(() => {
