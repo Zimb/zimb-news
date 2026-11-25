@@ -1,0 +1,45 @@
+name: annotation-pilote
+
+# Mesure le coût réel et la qualité de l'annotation d'articles arXiv sur un petit échantillon.
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "Nombre d'articles"
+        default: "30"
+      models:
+        description: "Modèles (séparés par des virgules)"
+        default: "claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5"
+      effort:
+        description: "Effort (low, medium, high)"
+        default: "low"
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install "anthropic>=2.14,<3" "httpx>=0.28,<1"
+
+      - name: Annoter l'échantillon
+        run: python tools/annotate_pilot.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PILOT_N: ${{ inputs.n }}
+          PILOT_MODELS: ${{ inputs.models }}
+          PILOT_EFFORT: ${{ inputs.effort }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annotate-pilot
+          path: annotate_pilot.json
+          retention-days: 7
