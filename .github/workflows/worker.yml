@@ -37,3 +37,4 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
           CLAUDE_EFFORT: ${{ vars.CLAUDE_EFFORT }}
           WINDOW_MINUTES: ${{ vars.WINDOW_MINUTES }}
+          ACTIVE_HOURS: ${{ vars.ACTIVE_HOURS }}

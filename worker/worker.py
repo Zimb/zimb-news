@@ -2,17 +2,19 @@
 
 Toutes les 15 min (GitHub Actions) :
 1. liste les derniers fichiers GDELT publiés sur Hugging Face (openalphalab/gdelt-news)
-2. lit les articles en français avec DuckDB
-3. supprime les doublons (même article republié par plusieurs titres d'un groupe de presse)
-4. demande à Claude de regrouper les articles par histoire et de les résumer
-5. enregistre le résultat dans Supabase (fonction ingest_run)
+2. lit les articles en français avec DuckDB et écarte les adresses déjà traitées
+3. regroupe les reprises d'un même article (titres d'un même groupe de presse)
+4. envoie à Claude les nouveaux articles et les histoires déjà suivies : il rattache chaque
+   article à une histoire existante (en mettant son résumé à jour) ou crée une nouvelle histoire
+5. enregistre le résultat dans Supabase (fonction ingest_run_v2)
 
 Variables d'environnement :
   SUPABASE_URL, SUPABASE_SECRET_KEY   (obligatoires)
   ANTHROPIC_API_KEY                   (obligatoire sauf DRY_RUN=1)
   HF_TOKEN                            (facultatif, évite les limites de débit Hugging Face)
   CLAUDE_MODEL   (défaut claude-opus-5-5)   CLAUDE_EFFORT (défaut medium)
-  WINDOW_MINUTES (défaut 15)                DRY_RUN=1 : n'appelle ni Claude ni Supabase en écriture
+  WINDOW_MINUTES (défaut 15)                ACTIVE_HOURS (défaut 6 : histoires proposées au rattachement)
+  DRY_RUN=1 : lit GDELT et les histoires actives, affiche le prompt, n'appelle pas Claude et n'écrit rien
 """
 
 from __future__ import annotations
@@ -39,9 +41,10 @@ HF_FILE = f"https://huggingface.co/datasets/{REPO}/resolve/main/"
 MODEL = os.environ.get("CLAUDE_MODEL") or "claude-opus-5-5"
 EFFORT = os.environ.get("CLAUDE_EFFORT") or "medium"
 WINDOW = dt.timedelta(minutes=int(os.environ.get("WINDOW_MINUTES") or 15))
+ACTIVE_HOURS = int(os.environ.get("ACTIVE_HOURS") or 6)
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 MAX_ARTICLES = 400
-TOP_STORIES = 10
+MAX_THREADS = 40
 SNIPPET_CHARS = 320
 
 CATEGORIES = ["politique", "international", "économie", "société", "faits divers",
@@ -67,16 +70,14 @@ def list_recent_files(http: httpx.Client, now: dt.datetime) -> list[tuple[str, d
     """Fichiers Parquet des dossiers du jour et de la veille (UTC) : (chemin, début, fin)."""
     files = []
     for day in (now, now - dt.timedelta(days=1)):
-        url = f"{HF_API}/{day:%Y/%m/%d}"
-        r = http.get(url, headers=hf_headers())
+        r = http.get(f"{HF_API}/{day:%Y/%m/%d}", headers=hf_headers())
         if r.status_code == 404:
             continue
         r.raise_for_status()
         for entry in r.json():
-            path = entry.get("path", "")
-            m = re.search(r"(\d{14})-(\d{14})\.parquet$", path)
+            m = re.search(r"(\d{14})-(\d{14})\.parquet$", entry.get("path", ""))
             if m:
-                files.append((path, parse_stamp(m.group(1)), parse_stamp(m.group(2))))
+                files.append((entry["path"], parse_stamp(m.group(1)), parse_stamp(m.group(2))))
     return sorted(files, key=lambda f: f[2])
 
 
@@ -120,9 +121,9 @@ def title_from_slug(slug: str) -> str:
     return (words[:1].upper() + words[1:])[:160] if words else ""
 
 
-def load_articles(paths: list[Path]) -> list[dict]:
-    con = duckdb.connect()
-    rows = con.execute(
+def load_rows(paths: list[Path]) -> list[dict]:
+    """Articles en français des fichiers, une ligne par adresse (sans regroupement)."""
+    rows = duckdb.connect().execute(
         """
         SELECT source_url, date, text
         FROM read_parquet(?)
@@ -131,85 +132,106 @@ def load_articles(paths: list[Path]) -> list[dict]:
         """,
         [[str(p) for p in paths]],
     ).fetchall()
-
-    articles, seen = [], {}
+    out = []
     for url, date, text in rows:
         slug = slug_of(url)
         if len(slug) < 15:          # page d'accueil, rubrique, page de service
             continue
         clean = re.sub(r"\s+", " ", text).strip()
-        fingerprint = hashlib.sha1(strip_accents(clean[:400].lower()).encode()).hexdigest()
-        art = {
+        out.append({
             "url": url,
             "domain": domain_of(url).split(":")[0],
             "title_guess": title_from_slug(slug),
             "snippet": clean[:SNIPPET_CHARS],
             "observed_at": date,
-        }
-        # Doublon syndiqué : même slug ou même début de texte qu'un article déjà vu
-        key = seen.get(slug) or seen.get(fingerprint)
+            "_slug": slug,
+            "_fp": hashlib.sha1(strip_accents(clean[:400].lower()).encode()).hexdigest(),
+        })
+    return out
+
+
+def group_mirrors(rows: list[dict]) -> list[dict]:
+    """Regroupe les reprises syndiquées : même slug ou même début de texte."""
+    articles, index = [], {}
+    for art in rows:
+        key = index.get(art["_slug"])
+        if key is None:
+            key = index.get(art["_fp"])
         if key is not None:
             articles[key]["mirrors"].append(art)
             continue
         art["mirrors"] = []
-        seen[slug] = seen[fingerprint] = len(articles)
+        index[art["_slug"]] = index[art["_fp"]] = len(articles)
         articles.append(art)
     return articles[:MAX_ARTICLES]
 
 
+def public_fields(a: dict) -> dict:
+    return {k: a[k] for k in ("url", "domain", "title_guess", "snippet", "observed_at")}
+
+
 # --------------------------------------------------------------------------- Claude
 
-SYSTEM = f"""Tu es secrétaire de rédaction pour un site qui présente les histoires dont la presse francophone parle le plus en ce moment.
+SYSTEM = f"""Tu es secrétaire de rédaction pour un site qui suit les histoires dont la presse francophone parle le plus en ce moment.
 
-On te donne des articles repérés par GDELT ces 15 dernières minutes. Pour chacun : un identifiant, le média, un titre déduit de l'URL et le début du texte. Le texte est reconstitué automatiquement : il peut commencer au milieu d'une phrase, être dans le désordre ou contenir des répétitions.
+On te donne deux listes :
+- les HISTOIRES DÉJÀ SUIVIES ces dernières heures (identifiant, catégorie, titre, résumé) ;
+- les NOUVEAUX ARTICLES repérés par GDELT ces 15 dernières minutes : identifiant, média, titre déduit de l'URL, début du texte. Le texte est reconstitué automatiquement : il peut commencer au milieu d'une phrase, être dans le désordre ou contenir des répétitions.
 
 Ta tâche :
-1. Regroupe les articles qui traitent du MÊME événement ou de la même histoire précise (pas seulement du même thème général). Un article peut n'appartenir à aucune histoire.
-2. Écarte ce qui n'est pas de l'actualité : programmes TV, horoscopes, jeux, promotions, recettes, conseils pratiques intemporels, pages de service.
-3. Pour chaque histoire, rédige en français :
-   - un titre factuel de 90 caractères maximum ;
-   - un résumé neutre de 2 à 3 phrases, fondé uniquement sur les extraits fournis, sans rien inventer ni extrapoler. Si un point est incertain dans les extraits, ne l'affirme pas ;
-   - une catégorie parmi : {", ".join(CATEGORIES)}.
-4. Donne au maximum 15 histoires, en privilégiant celles couvertes par le plus d'articles distincts. Une histoire couverte par un seul article n'est retenue que si elle est manifestement importante."""
+1. Pour chaque nouvel article d'actualité, décide s'il traite d'une histoire déjà suivie (même événement précis, ou sa suite directe) ou d'une nouvelle histoire. Rattache-le à l'histoire existante dès que c'est le cas : il ne faut jamais créer de doublon d'une histoire déjà suivie, même si l'angle ou la formulation diffère.
+2. Regroupe entre eux les nouveaux articles qui parlent d'une même nouvelle histoire. Un regroupement porte sur un événement précis, pas seulement sur un thème général.
+3. Écarte ce qui n'est pas de l'actualité : programmes TV, horoscopes, jeux, promotions, recettes, conseils pratiques intemporels, pages de service. Un article peut n'appartenir à aucun groupe.
+4. Pour chaque groupe, donne en français :
+   - existing_story_id : l'identifiant de l'histoire déjà suivie, ou 0 pour une nouvelle histoire ;
+   - title : titre factuel de 90 caractères maximum. Pour une histoire existante, garde le titre actuel, sauf si les nouveaux articles apportent un fait nouveau important (bilan, décision, résultat) ;
+   - summary : résumé neutre de 2 à 3 phrases, fondé uniquement sur les extraits et le résumé existant, sans rien inventer ni extrapoler. Pour une histoire existante, recopie le résumé actuel s'il n'y a rien de nouveau ; sinon intègre l'information nouvelle en gardant l'essentiel de l'ancien ;
+   - category : parmi {", ".join(CATEGORIES)} ;
+   - article_ids : les identifiants des nouveaux articles du groupe.
+5. Une nouvelle histoire couverte par un seul article n'est retenue que si elle est manifestement importante. N'inclus une histoire existante que si au moins un nouvel article s'y rattache."""
 
 SCHEMA = {
     "type": "object",
     "properties": {
-        "stories": {
+        "groups": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
+                    "existing_story_id": {"type": "integer"},
                     "title": {"type": "string"},
                     "summary": {"type": "string"},
                     "category": {"type": "string", "enum": CATEGORIES},
                     "article_ids": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["title", "summary", "category", "article_ids"],
+                "required": ["existing_story_id", "title", "summary", "category", "article_ids"],
                 "additionalProperties": False,
             },
         }
     },
-    "required": ["stories"],
+    "required": ["groups"],
     "additionalProperties": False,
 }
 
 
-def build_prompt(articles: list[dict]) -> str:
+def build_prompt(articles: list[dict], threads: list[dict]) -> str:
+    known = "\n".join(
+        f"[#{t['id']}] ({t['category']}) {t['title']} — {t['summary']}" for t in threads
+    ) or "(aucune)"
     lines = []
     for i, a in enumerate(articles):
         extra = f" (+{len(a['mirrors'])} reprises)" if a["mirrors"] else ""
         lines.append(f"[{i}] {a['domain']}{extra} | {a['title_guess']} | {a['snippet']}")
-    return "Articles :\n\n" + "\n".join(lines)
+    return f"HISTOIRES DÉJÀ SUIVIES :\n{known}\n\nNOUVEAUX ARTICLES :\n" + "\n".join(lines)
 
 
-def ask_claude(articles: list[dict]) -> tuple[list[dict], dict]:
+def ask_claude(prompt: str) -> tuple[list[dict], dict]:
     client = anthropic.Anthropic()
     params = dict(
         model=MODEL,
         max_tokens=16000,
         system=SYSTEM,
-        messages=[{"role": "user", "content": build_prompt(articles)}],
+        messages=[{"role": "user", "content": prompt}],
         output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
     )
     try:
@@ -228,33 +250,31 @@ def ask_claude(articles: list[dict]) -> tuple[list[dict], dict]:
     if resp.stop_reason == "max_tokens":
         raise RuntimeError("Réponse tronquée (max_tokens atteint)")
     text = next(b.text for b in resp.content if b.type == "text")
-    return json.loads(text)["stories"], usage
+    return json.loads(text)["groups"], usage
 
 
-def rank_stories(raw: list[dict], articles: list[dict]) -> list[dict]:
-    stories = []
-    for s in raw:
-        ids = sorted({i for i in s["article_ids"] if 0 <= i < len(articles)})
+def build_groups(raw: list[dict], articles: list[dict], threads: list[dict]) -> list[dict]:
+    """Valide la réponse : identifiants connus, chaque article dans un seul groupe."""
+    known_ids = {t["id"] for t in threads}
+    used, groups = set(), []
+    for g in raw:
+        ids = [i for i in dict.fromkeys(g["article_ids"]) if 0 <= i < len(articles) and i not in used]
         if not ids:
             continue
-        members = [articles[i] for i in ids]
-        all_arts = members + [m for a in members for m in a["mirrors"]]
-        stories.append({
-            "title": s["title"].strip()[:200],
-            "summary": s["summary"].strip(),
-            "category": s["category"],
-            "n_articles": len(members),                       # articles distincts
-            "n_sources": len({a["domain"] for a in all_arts}),  # médias, reprises comprises
-            "urls": [a["url"] for a in all_arts],
-            "_articles": all_arts,
-            # médias ayant écrit leur propre article (les reprises syndiquées ne comptent pas)
-            "_independent": len({a["domain"] for a in members}),
+        used.update(ids)
+        thread_id = g["existing_story_id"] if g["existing_story_id"] in known_ids else 0
+        members = []
+        for i in ids:
+            members.append({"url": articles[i]["url"], "mirror": False, "_a": articles[i]})
+            members += [{"url": m["url"], "mirror": True, "_a": m} for m in articles[i]["mirrors"]]
+        groups.append({
+            "thread_id": thread_id,
+            "title": g["title"].strip()[:200],
+            "summary": g["summary"].strip(),
+            "category": g["category"],
+            "members": members,
         })
-    # D'abord le nombre de médias indépendants (étendue de la couverture), puis les articles distincts
-    stories.sort(key=lambda s: (s.pop("_independent"), s["n_articles"], s["n_sources"]), reverse=True)
-    for rank, s in enumerate(stories[:TOP_STORIES], 1):
-        s["rank"] = rank
-    return stories[:TOP_STORIES]
+    return groups
 
 
 # --------------------------------------------------------------------------- Supabase
@@ -267,10 +287,17 @@ def supabase_headers() -> dict:
     return h
 
 
+def rpc(http: httpx.Client, name: str, body: dict):
+    r = http.post(f"{os.environ['SUPABASE_URL']}/rest/v1/rpc/{name}", json=body, headers=supabase_headers())
+    if r.status_code >= 400:
+        raise RuntimeError(f"Supabase {name} {r.status_code}: {r.text[:500]}")
+    return r.json()
+
+
 def last_window_end(http: httpx.Client) -> dt.datetime | None:
     r = http.get(
         f"{os.environ['SUPABASE_URL']}/rest/v1/runs",
-        params={"select": "window_end", "status": "eq.ok", "order": "id.desc", "limit": "1"},
+        params={"select": "window_end", "status": "in.(ok,no_data)", "order": "id.desc", "limit": "1"},
         headers=supabase_headers(),
     )
     r.raise_for_status()
@@ -278,26 +305,23 @@ def last_window_end(http: httpx.Client) -> dt.datetime | None:
     return dt.datetime.fromisoformat(rows[0]["window_end"]) if rows and rows[0]["window_end"] else None
 
 
-def ingest(http: httpx.Client, payload: dict) -> int:
-    r = http.post(
-        f"{os.environ['SUPABASE_URL']}/rest/v1/rpc/ingest_run",
-        json={"payload": payload},
-        headers=supabase_headers(),
-    )
-    if r.status_code >= 400:
-        raise RuntimeError(f"Supabase {r.status_code}: {r.text[:500]}")
-    return r.json()
+def known_urls(http: httpx.Client, urls: list[str]) -> set[str]:
+    known = set()
+    for i in range(0, len(urls), 500):
+        for row in rpc(http, "known_urls", {"urls": urls[i:i + 500]}):
+            known.add(row if isinstance(row, str) else next(iter(row.values())))
+    return known
 
 
 # --------------------------------------------------------------------------- Main
 
 def main() -> int:
     started = dt.datetime.now(dt.timezone.utc)
-    if not DRY_RUN:
-        missing = [k for k in ("SUPABASE_URL", "SUPABASE_SECRET_KEY", "ANTHROPIC_API_KEY") if not os.environ.get(k)]
-        if missing:
-            log(f"Configuration incomplète, exécution ignorée. Manquant : {', '.join(missing)}")
-            return 0
+    required = ["SUPABASE_URL", "SUPABASE_SECRET_KEY"] + ([] if DRY_RUN else ["ANTHROPIC_API_KEY"])
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        log(f"Configuration incomplète, exécution ignorée. Manquant : {', '.join(missing)}")
+        return 0
     http = httpx.Client(timeout=60)
 
     files = list_recent_files(http, started)
@@ -308,17 +332,20 @@ def main() -> int:
     window_start = window_end - WINDOW
     selected = [f for f in files if f[2] > window_start]
 
-    if not DRY_RUN:
-        previous = last_window_end(http)
-        if previous and window_end <= previous:
-            log(f"Rien de nouveau depuis {previous:%H:%M} UTC.")
-            return 0
+    previous = last_window_end(http)
+    if previous and window_end <= previous and not DRY_RUN:
+        log(f"Rien de nouveau depuis {previous:%H:%M} UTC.")
+        return 0
 
     log(f"Fenêtre {window_start:%Y-%m-%d %H:%M} → {window_end:%H:%M} UTC, {len(selected)} fichier(s)")
     with tempfile.TemporaryDirectory() as tmp:
-        paths = [download(http, f[0], Path(tmp)) for f in selected]
-        articles = load_articles(paths)
-    log(f"{len(articles)} articles distincts en français")
+        rows = load_rows([download(http, f[0], Path(tmp)) for f in selected])
+    known = known_urls(http, [r["url"] for r in rows])
+    fresh = [r for r in rows if r["url"] not in known]
+    articles = group_mirrors(fresh)
+    threads = rpc(http, "active_threads", {"hours": ACTIVE_HOURS, "lim": MAX_THREADS})
+    log(f"{len(rows)} articles en français, {len(known)} déjà vus, "
+        f"{len(articles)} nouveaux articles distincts, {len(threads)} histoires actives")
 
     base = {
         "started_at": started.isoformat(),
@@ -326,37 +353,46 @@ def main() -> int:
         "window_end": window_end.isoformat(),
         "source_files": [f[0] for f in selected],
         "n_articles": len(articles),
+        "seen_urls": [r["url"] for r in fresh],
     }
+    prompt = build_prompt(articles, threads)
 
     if DRY_RUN:
-        prompt = build_prompt(articles)
-        log(f"DRY_RUN : prompt de {len(prompt):,} caractères. Aperçu :\n{prompt[:1500]}")
+        log(f"DRY_RUN : prompt de {len(prompt):,} caractères. Aperçu :\n{prompt[:2500]}")
         return 0
 
-    if len(articles) < 5:
-        ingest(http, {**base, "status": "no_data", "stories": []})
-        log("Trop peu d'articles, exécution enregistrée sans histoire.")
+    if not articles:
+        rpc(http, "ingest_run_v2", {"payload": {**base, "status": "no_data", "groups": []}})
+        log("Aucun nouvel article.")
         return 0
 
     try:
-        raw, usage = ask_claude(articles)
-    except Exception as e:  # on garde une trace de l'échec en base, puis on échoue le job
-        ingest(http, {**base, "status": "error", "error": str(e)[:1000], "model": MODEL, "stories": []})
+        raw, usage = ask_claude(prompt)
+    except Exception as e:  # trace de l'échec en base (sans marquer les articles comme vus), puis échec du job
+        rpc(http, "ingest_run_v2", {"payload": {**base, "seen_urls": [], "status": "error",
+                                                "error": str(e)[:1000], "model": MODEL, "groups": []}})
         raise
 
-    stories = rank_stories(raw, articles)
-    used = {a["url"]: a for s in stories for a in s.pop("_articles")}
+    groups = build_groups(raw, articles, threads)
     payload = {
         **base, **usage, "status": "ok",
-        "articles": [{k: a[k] for k in ("url", "domain", "title_guess", "snippet", "observed_at")}
-                     for a in used.values()],
-        "stories": stories,
+        "articles": [public_fields(m["_a"]) for g in groups for m in g["members"]],
+        "groups": [{**g, "members": [{"url": m["url"], "mirror": m["mirror"]} for m in g["members"]]}
+                   for g in groups],
     }
-    run_id = ingest(http, payload)
-    log(f"Run {run_id} : {len(stories)} histoires, {usage['input_tokens']} tokens en entrée, "
-        f"{usage['output_tokens']} en sortie ({usage['model']})")
-    for s in stories:
-        log(f"  {s['rank']:>2}. [{s['n_articles']} art. / {s['n_sources']} médias] {s['title']}")
+    run_id = rpc(http, "ingest_run_v2", {"payload": payload})
+
+    titles = {t["id"]: t["title"] for t in threads}
+    n_new = sum(1 for g in groups if not g["thread_id"])
+    log(f"Run {run_id} : {len(groups)} groupes ({n_new} nouvelles histoires, {len(groups) - n_new} complétées), "
+        f"{usage['input_tokens']} tokens en entrée, {usage['output_tokens']} en sortie ({usage['model']})")
+    for g in groups:
+        n = sum(1 for m in g["members"] if not m["mirror"])
+        if g["thread_id"]:
+            changed = " (titre mis à jour)" if g["title"] != titles[g["thread_id"]] else ""
+            log(f"  + #{g['thread_id']} ← {n} article(s) : {g['title']}{changed}")
+        else:
+            log(f"  * nouvelle ← {n} article(s) : {g['title']}")
     return 0
 
 

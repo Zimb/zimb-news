@@ -6,16 +6,21 @@ Site : https://news.zimb.app
 ## Fonctionnement
 
 ```
-GitHub Actions (toutes les 15 min)            Supabase (Postgres)            news.zimb.app
-  worker/worker.py                     ──►    runs / articles / stories ◄──  site/index.html
-  1. derniers fichiers GDELT (Hugging Face)   vue latest_stories             (GitHub Pages)
-  2. articles en français, sans doublons      lecture publique seule (RLS)
-  3. Claude regroupe par histoire et résume
+GitHub Actions (toutes les 15 min)                Supabase (Postgres)               news.zimb.app
+  worker/worker.py                          ──►   threads / thread_articles   ◄──   site/index.html
+  1. derniers fichiers GDELT (Hugging Face)       articles / seen_urls / runs       (GitHub Pages)
+  2. articles en français jamais vus              rpc trending(hours, lim)
+  3. regroupement des reprises syndiquées         lecture publique seule (RLS)
+  4. Claude rattache aux histoires suivies
+     ou crée de nouvelles histoires
 ```
 
 - Source : [openalphalab/gdelt-news](https://huggingface.co/datasets/openalphalab/gdelt-news), texte reconstitué depuis GDELT Web News NGrams 3.0.
-- Classement : d'abord le nombre de **médias différents** qui couvrent l'histoire, puis le nombre d'articles **distincts** (les reprises d'un même article par plusieurs titres d'un groupe de presse ne comptent qu'une fois comme article).
+- **Histoires persistantes** : chaque passage envoie à Claude les nouveaux articles et les histoires actives des 6 dernières heures. Il rattache les articles aux histoires existantes (et met leur résumé à jour si un fait nouveau apparaît) ou crée de nouvelles histoires.
+- **Pas de double traitement** : les adresses déjà vues (`seen_urls`) ne sont jamais renvoyées à Claude.
+- **Classement** (`trending`) : somme, sur les médias ayant écrit leur propre article sur l'histoire ces 3 dernières heures, d'un poids qui va de 1 (article de moins de 30 min) à 0,25 (fin de fenêtre). Les reprises syndiquées sont affichées mais ne comptent pas dans le score.
 - Seuls de courts extraits (320 caractères) sont stockés, et ils ne sont pas exposés publiquement.
+- Les tables `stories` / `story_articles` et la vue `latest_stories` datent de la première version et ne sont plus alimentées.
 
 ## Configuration (Settings → Secrets and variables → Actions)
 
@@ -28,10 +33,12 @@ GitHub Actions (toutes les 15 min)            Supabase (Postgres)            new
 | `CLAUDE_MODEL` | variable, facultatif | Défaut `claude-opus-5-5` |
 | `CLAUDE_EFFORT` | variable, facultatif | Défaut `medium` (`low` pour réduire le coût) |
 | `WINDOW_MINUTES` | variable, facultatif | Défaut `15` |
+| `ACTIVE_HOURS` | variable, facultatif | Défaut `6` : ancienneté maximale des histoires proposées au rattachement |
 
 ## Tester en local
 
 ```bash
 pip install -r worker/requirements.txt
-DRY_RUN=1 python worker/worker.py      # lit GDELT et affiche le prompt, sans appeler Claude ni écrire en base
+DRY_RUN=1 python worker/worker.py      # lit GDELT et les histoires actives, affiche le prompt, sans appeler Claude ni écrire en base
+                                       # (nécessite SUPABASE_URL et SUPABASE_SECRET_KEY)
 ```
