@@ -2,7 +2,9 @@ name: worker
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # GitHub peut décaler les lancements de quelques minutes
+    # GitHub décale souvent les lancements planifiés de 10 à 20 min : on vérifie toutes les 5 min.
+    # Un passage sans nouveau fichier GDELT s'arrête en quelques secondes, sans appeler Claude.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
