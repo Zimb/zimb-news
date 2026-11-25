@@ -45,6 +45,16 @@
   .rank { font: 700 22px/1.2 Georgia, serif; color: var(--accent); grid-row: span 3; }
   .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .cat { background: var(--accent-soft); color: var(--accent); padding: 1px 9px; border-radius: 999px; font-weight: 600; }
+  .badge { padding: 1px 8px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .badge.new { background: #dcfce7; color: #15803d; }
+  .badge.upd { background: #dbeafe; color: #1d4ed8; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .badge.new { background: #14532d; color: #bbf7d0; }
+    :root:not([data-theme="light"]) .badge.upd { background: #1e3a8a; color: #bfdbfe; }
+  }
+  :root[data-theme="dark"] .badge.new { background: #14532d; color: #bbf7d0; }
+  :root[data-theme="dark"] .badge.upd { background: #1e3a8a; color: #bfdbfe; }
+  .since { font-size: 13px; color: var(--muted); margin-top: 6px; }
   h2 { margin: 2px 0 0; font-size: 18px; line-height: 1.35; }
   .summary { margin: 4px 0 0; }
   details { grid-column: 2; margin-top: 8px; font-size: 14px; }
@@ -73,7 +83,7 @@
     <h1>Zimb <span>News</span></h1>
     <div class="status" id="status"><span class="dot"></span><span>Chargement…</span></div>
   </header>
-  <p class="lede">Les histoires dont la presse francophone parle le plus ces 15 dernières minutes, regroupées et résumées par IA.</p>
+  <p class="lede">Les histoires dont la presse francophone parle le plus ces 3 dernières heures, suivies et résumées par IA. Mis à jour toutes les 15 minutes.</p>
 
   <ol id="list" aria-live="polite">
     <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
@@ -82,7 +92,8 @@
   <footer>
     Les résumés sont générés automatiquement par Claude (Anthropic) à partir d'extraits d'articles repérés par
     <a href="https://www.gdeltproject.org/" rel="noopener">GDELT</a>. Ils peuvent contenir des erreurs : consultez les articles d'origine.
-    Le classement reflète le nombre de médias différents qui couvrent chaque histoire, pas leur audience.
+    Le classement reflète le nombre de médias différents qui ont écrit sur chaque histoire ces 3 dernières heures
+    (les plus récents comptent davantage), pas leur audience.
   </footer>
 </div>
 
@@ -90,6 +101,8 @@
   const SUPABASE_URL = "https://rtygalgkixjttiezdcym.supabase.co";
   const SUPABASE_KEY = "sb_publishable_BvcBt8lwp1wM5sD5_zn2rQ_R7ngt8-p"; // clé publique, lecture seule (RLS)
   const REFRESH_MS = 5 * 60 * 1000;
+  const HOURS = 3;   // fenêtre d'activité du classement
+  const LIMIT = 10;
 
   const $list = document.getElementById("list");
   const $status = document.getElementById("status");
@@ -105,27 +118,44 @@
     return `il y a ${h} h${min % 60 ? " " + String(min % 60).padStart(2, "0") : ""}`;
   }
 
-  function render(rows) {
+  const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+
+  function duration(from) {
+    const min = Math.max(1, Math.round((Date.now() - from.getTime()) / 60000));
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60);
+    return h < 48 ? `${h} h` : `${Math.floor(h / 24)} jours`;
+  }
+
+  function render(rows, run) {
+    if (run) {
+      const updated = new Date(run.finished_at);
+      const stale = Date.now() - updated.getTime() > 45 * 60000;
+      const hhmm = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      $status.innerHTML = `<span class="dot${stale ? " stale" : ""}"></span><span>Mis à jour ${ago(updated)} · articles jusqu'à ${hhmm(new Date(run.window_end))}</span>`;
+    }
     if (!rows.length) {
-      $list.innerHTML = `<li class="empty">Pas encore d'histoires : le premier passage du worker arrive bientôt.</li>`;
-      $status.innerHTML = `<span class="dot stale"></span><span>En attente de données</span>`;
+      $list.innerHTML = `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
+      if (!run) $status.innerHTML = `<span class="dot stale"></span><span>En attente de données</span>`;
       return;
     }
-    const end = new Date(rows[0].window_end);
-    const updated = new Date(rows[0].finished_at);
-    const stale = Date.now() - updated.getTime() > 45 * 60000;
-    const hhmm = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-    $status.innerHTML = `<span class="dot${stale ? " stale" : ""}"></span><span>Mis à jour ${ago(updated)} · articles jusqu'à ${hhmm(end)}</span>`;
 
-    $list.innerHTML = rows.map((s) => {
+    $list.innerHTML = rows.map((s, i) => {
       const sources = (s.sources || []);
+      const first = new Date(s.first_seen), upd = new Date(s.updated_at);
+      const isNew = Date.now() - first.getTime() < 45 * 60000;
+      const isUpd = !isNew && upd > first && Date.now() - upd.getTime() < 45 * 60000;
+      const badge = isNew ? `<span class="badge new">Nouveau</span>`
+                  : isUpd ? `<span class="badge upd">Mis à jour ${ago(upd)}</span>` : "";
+      const total = s.n_sources_total > s.n_sources_window ? ` (${s.n_sources_total} au total)` : "";
       return `
       <li class="story">
-        <div class="rank">${s.rank}</div>
-        <div class="meta"><span class="cat">${esc(s.category)}</span>
-          <span>${s.n_articles} article${s.n_articles > 1 ? "s" : ""} · ${s.n_sources} média${s.n_sources > 1 ? "s" : ""}</span></div>
+        <div class="rank">${i + 1}</div>
+        <div class="meta"><span class="cat">${esc(s.category)}</span>${badge}
+          <span>${plural(s.n_sources_window, "média")} en ${HOURS} h${total} · ${plural(s.n_articles_total, "article")}</span></div>
         <h2>${esc(s.title)}</h2>
         <p class="summary">${esc(s.summary)}</p>
+        <div class="since">Suivie depuis ${duration(first)}</div>
         <details>
           <summary>Voir les ${sources.length} source${sources.length > 1 ? "s" : ""}</summary>
           <ul class="sources">${sources.map((a) => `
@@ -139,11 +169,14 @@
 
   async function load() {
     try {
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/latest_stories?select=*&order=rank`, {
-        headers: { apikey: SUPABASE_KEY },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      render(await r.json());
+      const headers = { apikey: SUPABASE_KEY };
+      const [stories, runs] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/rpc/trending?hours=${HOURS}&lim=${LIMIT}`, { headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/runs?select=finished_at,window_end&status=in.(ok,no_data)&order=id.desc&limit=1`, { headers }),
+      ]);
+      if (!stories.ok) throw new Error(`HTTP ${stories.status}`);
+      const run = runs.ok ? (await runs.json())[0] : null;
+      render(await stories.json(), run);
     } catch (e) {
       console.error(e);
       if (!$list.querySelector(".story")) {
