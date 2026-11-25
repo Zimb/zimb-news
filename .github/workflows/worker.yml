@@ -27,6 +27,12 @@ jobs:
 
       - run: pip install -r worker/requirements.txt
 
+      - name: Cache du modèle d'embeddings
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2
+
       - name: Regrouper et résumer le dernier quart d'heure
         run: python worker/worker.py
         env:
@@ -38,3 +44,5 @@ jobs:
           CLAUDE_EFFORT: ${{ vars.CLAUDE_EFFORT }}
           WINDOW_MINUTES: ${{ vars.WINDOW_MINUTES }}
           ACTIVE_HOURS: ${{ vars.ACTIVE_HOURS }}
+          AUTO_ATTACH: ${{ vars.AUTO_ATTACH }}
+          EMBED_CACHE: .cache/fastembed

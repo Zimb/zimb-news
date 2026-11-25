@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 import anthropic
 import duckdb
 import httpx
+import numpy as np
 
 REPO = "openalphalab/gdelt-news"
 HF_API = f"https://huggingface.co/api/datasets/{REPO}/tree/main/data"
@@ -46,6 +47,14 @@ DRY_RUN = os.environ.get("DRY_RUN") == "1"
 MAX_ARTICLES = 400
 MAX_THREADS = 40
 SNIPPET_CHARS = 320
+
+# Embeddings (modèle libre, exécuté dans le worker) — seuils calibrés sur les histoires réelles :
+# article ↔ bonne histoire ≈ 0,68 (médiane), article ↔ meilleure mauvaise histoire ≈ 0,36
+EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+EMBED_CACHE = os.environ.get("EMBED_CACHE") or None
+AUTO_ATTACH = float(os.environ.get("AUTO_ATTACH") or 0.65)   # rattachement sans Claude au-dessus de ce score…
+AUTO_MARGIN = 0.10                                           # …et avec cette avance sur la 2e histoire
+SHORTLIST = 0.35                                             # histoires proposées à Claude
 
 CATEGORIES = ["politique", "international", "économie", "société", "faits divers",
               "sport", "culture", "sciences et tech", "santé", "environnement", "autre"]
@@ -166,6 +175,59 @@ def group_mirrors(rows: list[dict]) -> list[dict]:
     return articles[:MAX_ARTICLES]
 
 
+_embedder = None
+
+
+def embed(texts: list[str]) -> np.ndarray:
+    """Vecteurs normalisés (similarité cosinus = produit scalaire)."""
+    global _embedder
+    if _embedder is None:
+        from fastembed import TextEmbedding
+        _embedder = TextEmbedding(EMBED_MODEL, cache_dir=EMBED_CACHE)
+    m = np.array(list(_embedder.embed(texts)), dtype=np.float32)
+    return m / np.clip(np.linalg.norm(m, axis=1, keepdims=True), 1e-9, None)
+
+
+def route_articles(articles: list[dict], threads: list[dict]) -> dict:
+    """Répartit les articles : rattachement automatique, sonde pour Claude, ou décision par Claude."""
+    out = {"auto": {}, "probes": {}, "to_claude": list(range(len(articles))), "threads": threads[:MAX_THREADS]}
+    if not articles or not threads:
+        return out
+    A = embed([f"{a['title_guess']}. {a['snippet']}" for a in articles])
+    T = embed([f"{t['title']}. {t['summary']}" for t in threads])
+    S = A @ T.T
+
+    auto: dict[int, list[int]] = {}
+    rest = []
+    for k in range(len(articles)):
+        order = np.argsort(-S[k])
+        best = S[k, order[0]]
+        second = S[k, order[1]] if len(order) > 1 else 0.0
+        if best >= AUTO_ATTACH and best - second >= AUTO_MARGIN:
+            auto.setdefault(int(order[0]), []).append(k)
+        else:
+            rest.append(k)
+
+    # Une sonde par histoire complétée automatiquement : l'article le plus éloigné du résumé,
+    # le plus susceptible d'apporter un fait nouveau (Claude rédige alors l'évolution)
+    probes = {min(ks, key=lambda k: S[k, j]): j for j, ks in auto.items()}
+    seen_by_claude = rest + list(probes)
+
+    # Histoires proposées à Claude : proches d'au moins un article qu'il verra
+    if seen_by_claude:
+        best_per_thread = S[seen_by_claude].max(axis=0)
+        keep = [j for j in np.argsort(-best_per_thread) if best_per_thread[j] >= SHORTLIST or j in probes.values()]
+    else:
+        keep = []
+    out.update(
+        auto={threads[j]["id"]: ks for j, ks in auto.items()},
+        probes={k: threads[j]["id"] for k, j in probes.items()},
+        to_claude=sorted(seen_by_claude),
+        threads=[threads[j] for j in keep[:MAX_THREADS]],
+    )
+    return out
+
+
 def public_fields(a: dict) -> dict:
     return {k: a[k] for k in ("url", "domain", "title_guess", "snippet", "observed_at")}
 
@@ -221,7 +283,9 @@ SCHEMA = {
 }
 
 
-def build_prompt(articles: list[dict], threads: list[dict]) -> str:
+def build_prompt(articles: list[dict], threads: list[dict], probe_of: dict[int, int] | None = None) -> str:
+    """probe_of : index dans `articles` → histoire à laquelle l'article est déjà rattaché."""
+    probe_of = probe_of or {}
     def thread_line(t: dict) -> str:
         line = f"[#{t['id']}] ({t['category']}) {t['title']} — {t['summary']}"
         if t.get("updates"):
@@ -231,6 +295,8 @@ def build_prompt(articles: list[dict], threads: list[dict]) -> str:
     lines = []
     for i, a in enumerate(articles):
         extra = f" (+{len(a['mirrors'])} reprises)" if a["mirrors"] else ""
+        if i in probe_of:
+            extra += f" (déjà rattaché à #{probe_of[i]} : indique seulement s'il apporte un fait nouveau)"
         lines.append(f"[{i}] {a['domain']}{extra} | {a['title_guess']} | {a['snippet']}")
     return f"HISTOIRES DÉJÀ SUIVIES :\n{known}\n\nNOUVEAUX ARTICLES :\n" + "\n".join(lines)
 
@@ -290,6 +356,31 @@ def build_groups(raw: list[dict], articles: list[dict], threads: list[dict]) -> 
             "category": g["category"],
             "members": members,
         })
+    return groups
+
+
+def members_of(art: dict) -> list[dict]:
+    return [{"url": art["url"], "mirror": False, "_a": art}] + \
+           [{"url": m["url"], "mirror": True, "_a": m} for m in art["mirrors"]]
+
+
+def merge_auto(groups: list[dict], auto: dict[int, list[int]], articles: list[dict], threads: list[dict]) -> list[dict]:
+    """Ajoute les rattachements automatiques ; ils priment si Claude a placé une sonde ailleurs."""
+    owner = {a_url["url"]: tid for tid, ks in auto.items() for k in ks for a_url in members_of(articles[k])}
+    for g in groups:   # retire des autres groupes les articles déjà rattachés automatiquement
+        g["members"] = [m for m in g["members"] if owner.get(m["url"], g["thread_id"]) == g["thread_id"]]
+    groups = [g for g in groups if g["members"]]
+    by_thread = {g["thread_id"]: g for g in groups if g["thread_id"]}
+    category = {t["id"]: t["category"] for t in threads}
+    for tid, ks in auto.items():
+        g = by_thread.get(tid)
+        if g is None:
+            g = {"thread_id": tid, "title": "", "summary": "", "update": "", "category": category.get(tid, "autre"),
+                 "members": [], "auto": True}
+            groups.append(g)
+            by_thread[tid] = g
+        present = {m["url"] for m in g["members"]}
+        g["members"] += [m for k in ks for m in members_of(articles[k]) if m["url"] not in present]
     return groups
 
 
@@ -371,29 +462,46 @@ def main() -> int:
         "n_articles": len(articles),
         "seen_urls": [r["url"] for r in fresh],
     }
-    prompt = build_prompt(articles, threads)
+
+    if not articles:
+        if not DRY_RUN:
+            rpc(http, "ingest_run_v2", {"payload": {**base, "status": "no_data", "groups": []}})
+        log("Aucun nouvel article.")
+        return 0
+
+    # Embeddings : rattachement automatique des articles évidents, Claude pour le reste
+    routing = route_articles(articles, threads)
+    prompt_articles = [articles[k] for k in routing["to_claude"]]
+    probe_of = {i: routing["probes"][k] for i, k in enumerate(routing["to_claude"]) if k in routing["probes"]}
+    n_auto = sum(len(ks) for ks in routing["auto"].values())
+    log(f"Embeddings : {n_auto} article(s) rattaché(s) automatiquement à {len(routing['auto'])} histoire(s), "
+        f"{len(prompt_articles)} envoyé(s) à Claude (dont {len(probe_of)} sonde(s)), "
+        f"{len(routing['threads'])}/{len(threads)} histoires proposées")
+    prompt = build_prompt(prompt_articles, routing["threads"], probe_of)
 
     if DRY_RUN:
         log(f"DRY_RUN : prompt de {len(prompt):,} caractères. Aperçu :\n{prompt[:2500]}")
         return 0
 
-    if not articles:
-        rpc(http, "ingest_run_v2", {"payload": {**base, "status": "no_data", "groups": []}})
-        log("Aucun nouvel article.")
-        return 0
+    usage = {"model": MODEL, "input_tokens": 0, "output_tokens": 0}
+    raw = []
+    if prompt_articles:
+        try:
+            raw, usage = ask_claude(prompt)
+        except Exception as e:  # trace de l'échec en base (sans marquer les articles comme vus), puis échec du job
+            rpc(http, "ingest_run_v2", {"payload": {**base, "seen_urls": [], "status": "error",
+                                                    "error": str(e)[:1000], "model": MODEL, "groups": []}})
+            raise
+    else:
+        log("Tous les articles ont été rattachés automatiquement : aucun appel à Claude.")
 
-    try:
-        raw, usage = ask_claude(prompt)
-    except Exception as e:  # trace de l'échec en base (sans marquer les articles comme vus), puis échec du job
-        rpc(http, "ingest_run_v2", {"payload": {**base, "seen_urls": [], "status": "error",
-                                                "error": str(e)[:1000], "model": MODEL, "groups": []}})
-        raise
-
-    groups = build_groups(raw, articles, threads)
+    groups = build_groups(raw, prompt_articles, routing["threads"])
+    groups = merge_auto(groups, routing["auto"], articles, threads)
     payload = {
         **base, **usage, "status": "ok",
         "articles": [public_fields(m["_a"]) for g in groups for m in g["members"]],
-        "groups": [{**g, "members": [{"url": m["url"], "mirror": m["mirror"]} for m in g["members"]]}
+        "groups": [{**{k: v for k, v in g.items() if k != "auto"},
+                    "members": [{"url": m["url"], "mirror": m["mirror"]} for m in g["members"]]}
                    for g in groups],
     }
     run_id = rpc(http, "ingest_run_v2", {"payload": payload})
@@ -407,7 +515,8 @@ def main() -> int:
         if g["thread_id"]:
             changed = f" (nouveau titre : {g['title']})" if g["title"] and g["title"] != titles[g["thread_id"]] else ""
             evo = f" — évolution : {g['update']}" if g["update"] else ""
-            log(f"  + #{g['thread_id']} ← {n} article(s) : {titles[g['thread_id']]}{changed}{evo}")
+            how = " [auto]" if g.get("auto") else ""
+            log(f"  + #{g['thread_id']}{how} ← {n} article(s) : {titles[g['thread_id']]}{changed}{evo}")
         else:
             log(f"  * nouvelle ← {n} article(s) : {g['title']}")
     return 0
