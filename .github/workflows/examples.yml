@@ -1,0 +1,55 @@
+name: exemples
+
+# Régénère la galerie d'exemples (site/exemples.json) en un lot de synthèses, puis republie le site.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Modèle Claude"
+        default: "claude-opus-5-5"
+      effort:
+        description: "Effort (low, medium, high)"
+        default: "medium"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: examples
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install "anthropic>=2.14,<3" "httpx>=0.28,<1"
+
+      - name: Générer les synthèses en lot
+        run: python tools/build_examples.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          EXAMPLES_MODEL: ${{ inputs.model }}
+          EXAMPLES_EFFORT: ${{ inputs.effort }}
+
+      - name: Enregistrer la galerie
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/exemples.json
+          git diff --cached --quiet && { echo "Rien de nouveau"; exit 0; }
+          git commit -m "Galerie d'exemples régénérée"
+          git push
+
+      - name: Republier le site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml -R "${{ github.repository }}"
