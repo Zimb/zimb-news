@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zimb Veille, exemples</title>
+<meta name="description" content="Exemples de veille IA pour ingénieurs et chercheurs : synthèses des 3 derniers jours sur 24 sujets, avec code et poids publiés, chiffres et sources.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23c2410c'/><path d='M9 10h14L9 22h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+  :root {
+    --bg: #faf8f5; --surface: #ffffff; --text: #1c1917; --muted: #6b645d; --line: #e7e2db;
+    --accent: #c2410c; --accent-soft: #fff1e8; --chip: #f3efe9;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141210; --surface: #1d1a17; --text: #f2eee9; --muted: #a39b92; --line: #2f2a25;
+      --accent: #fb923c; --accent-soft: #2a1b10; --chip: #27231f;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141210; --surface: #1d1a17; --text: #f2eee9; --muted: #a39b92; --line: #2f2a25;
+    --accent: #fb923c; --accent-soft: #2a1b10; --chip: #27231f;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font: 700 28px/1.2 Georgia, "Times New Roman", serif; }
+  h1 span { color: var(--accent); }
+  header nav { display: flex; gap: 14px; font-size: 14px; }
+  header nav a { color: var(--muted); }
+  .pitch { margin: 14px 0 6px; font-size: 18px; line-height: 1.5; }
+  .meta-line { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  .filter { width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; margin-bottom: 16px; }
+  .topics { display: grid; gap: 12px; }
+  details.topic { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  details.topic > summary { list-style: none; cursor: pointer; padding: 16px 20px; display: grid; gap: 4px; }
+  details.topic > summary::-webkit-details-marker { display: none; }
+  details.topic > summary:hover { background: var(--accent-soft); }
+  .tname { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); }
+  .thead { font: 700 18px/1.3 Georgia, "Times New Roman", serif; }
+  .tcount { font-size: 13px; color: var(--muted); }
+  .body { padding: 0 20px 18px; border-top: 1px solid var(--line); }
+  .overview { margin: 14px 0 0; }
+  .section { margin: 18px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+  .hl { border-top: 1px solid var(--line); padding: 12px 0 2px; }
+  .hl:first-of-type { border-top: 0; }
+  .hl h4 { margin: 0 0 4px; font-size: 16px; }
+  .hl.rel h4::before { content: "▶ "; color: var(--accent); }
+  .hl p { margin: 0 0 6px; }
+  .why { color: var(--muted); font-size: 14.5px; }
+  .why b { color: var(--text); }
+  .srcs { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 4px; font-size: 13.5px; }
+  .srcs a { color: var(--text); text-decoration: none; display: flex; gap: 8px; align-items: baseline; }
+  .srcs a:hover .t { text-decoration: underline; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+  .sig { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+  .trends { margin: 6px 0 0; padding-left: 20px; }
+  .cta { margin-top: 32px; padding: 20px; border-radius: 14px; background: var(--accent-soft); border: 1px solid var(--line); }
+  .cta h2 { margin: 0 0 6px; font-size: 18px; }
+  .cta p { margin: 0; }
+  .empty { color: var(--muted); font-style: italic; }
+  footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Zimb <span>Veille</span></h1>
+    <nav><a href="sujets.html">Mes sujets</a><a href="./">Actualité</a></nav>
+  </header>
+
+  <p class="pitch">Chaque matin, ce qui a vraiment bougé sur votre sujet en IA : versions publiées, modèles, articles de recherche, avec les chiffres, le code et les poids publiés, et chaque affirmation sourcée.</p>
+  <p class="meta-line" id="meta">Chargement des exemples…</p>
+
+  <input class="filter" id="filter" type="search" placeholder="Filtrer les sujets (agents, RAG, robotique…)" aria-label="Filtrer les sujets">
+  <div class="topics" id="topics"></div>
+
+  <div class="cta">
+    <h2>Vous voulez la veille de votre sujet, chaque matin par e-mail ?</h2>
+    <p>Zimb Veille est en test auprès d'ingénieurs et de chercheurs en IA. Écrivez-nous pour en faire partie.</p>
+  </div>
+
+  <footer>
+    Synthèses générées par Claude (Anthropic) à partir de sources publiques : arXiv, Hugging Face (articles et modèles),
+    versions GitHub, blogs des labos et Hacker News. Les résultats de recherche sont des affirmations des auteurs :
+    vérifiez dans les sources avant de vous appuyer dessus.
+  </footer>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const safeUrl = (u) => /^https?:\/\//i.test(u) ? u : "#";
+  const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+
+  const sourceList = (sources) => !sources?.length ? "" : `<ul class="srcs">${sources.map((s) => `
+    <li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener nofollow">
+      <span class="tag">${esc(s.source)}</span>
+      <span class="t">${esc(s.title)}${s.score ? ` <span class="tcount">· ${esc(s.score)}</span>` : ""}
+        ${(s.signals || []).map((x) => `<span class="sig">${esc(x)}</span>`).join("")}</span></a></li>`).join("")}</ul>`;
+
+  function body(c) {
+    return `
+      <p class="overview">${esc(c.overview)}</p>
+      ${c.releases?.length ? `<p class="section">Sorties concrètes</p>` : ""}
+      ${(c.releases || []).map((h) => `<div class="hl rel"><h4>${esc(h.title)}</h4><p>${esc(h.summary)}</p>${sourceList(h.sources)}</div>`).join("")}
+      ${c.highlights?.length ? `<p class="section">Avancées de recherche</p>` : ""}
+      ${(c.highlights || []).map((h) => `<div class="hl"><h4>${esc(h.title)}</h4><p>${esc(h.summary)}</p>
+        <p class="why"><b>Pourquoi c'est important :</b> ${esc(h.why_it_matters)}</p>${sourceList(h.sources)}</div>`).join("")}
+      ${c.trends?.length ? `<p class="section">Tendances</p><ul class="trends">${c.trends.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}`;
+  }
+
+  let all = [];
+  function render(filter = "") {
+    const f = filter.trim().toLowerCase();
+    const list = all.filter((t) => !f || `${t.name} ${t.description} ${t.content.headline}`.toLowerCase().includes(f));
+    $("topics").innerHTML = list.length ? list.map((t) => {
+      const c = t.content;
+      const n = (c.releases?.length || 0) + (c.highlights?.length || 0);
+      return `<details class="topic">
+        <summary>
+          <span class="tname">${esc(t.name)}</span>
+          <span class="thead">${esc(c.headline)}</span>
+          <span class="tcount">${plural(c.releases?.length || 0, "sortie")} · ${plural(c.highlights?.length || 0, "avancée")} · ${plural(t.n_items, "source")} examinées</span>
+        </summary>
+        <div class="body">${n || c.trends?.length ? body(c) : `<p class="empty">${esc(c.overview)}</p>`}</div>
+      </details>`;
+    }).join("") : `<p class="empty">Aucun sujet ne correspond.</p>`;
+  }
+
+  fetch("exemples.json", { cache: "no-cache" })
+    .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then((d) => {
+      all = d.topics;
+      const when = new Date(d.generated_at).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" });
+      $("meta").textContent = `${plural(all.length, "sujet")} · sources des ${d.days} derniers jours · générés le ${when}`;
+      render();
+    })
+    .catch(() => { $("meta").textContent = "Les exemples ne sont pas encore disponibles."; });
+
+  $("filter").addEventListener("input", (e) => render(e.target.value));
+</script>
+</body>
+</html>
