@@ -25,6 +25,30 @@ GitHub Actions (toutes les 15 min)                Supabase (Postgres)           
 - Un seul appel à Claude par passage : tous les nouveaux articles de la fenêtre (jusqu'à 400) et les histoires actives sont envoyés ensemble.
 - Les tables `stories` / `story_articles`, la vue `latest_stories` et la fonction `trending` (utilisée par `top_stories`) datent des premières versions ; les deux premières ne sont plus alimentées.
 
+## API de veille tech & science (`supabase/functions/news-api`)
+
+Fonction Edge Supabase, protégée par clé (`x-api-key`), page web : `site/sujets.html`.
+
+```
+Base : https://rtygalgkixjttiezdcym.supabase.co/functions/v1/news-api
+
+GET  /topics                                 liste des sujets
+POST /topics            {name, description?} crée un sujet (Claude génère les requêtes par source)
+GET  /topics/:slug/digest?days=1|2|3         synthèse (cache 2 h ; &refresh=1 pour forcer)
+POST /topics/:slug/ask  {question, days?}    question libre, réponse sourcée [S1]…
+GET  /topics/:slug/sources?days=1|2|3        sources brutes, sans IA (gratuit)
+GET  /usage                                  consommation de la clé sur 24 h
+```
+
+- Sources : arXiv (toutes les sciences), Hugging Face Daily Papers (IA, votes de la communauté), Hacker News (recherche stricte dans les titres).
+- Clés : seule l'empreinte SHA-256 est stockée (`api_keys`) ; quota d'appels à l'IA par 24 h glissantes (`daily_ai_limit`, 60 par défaut).
+- Secrets de la fonction (Supabase → Edge Functions → Secrets) : `ANTHROPIC_API_KEY` (obligatoire), `CLAUDE_MODEL` (défaut `claude-sonnet-5-5`), `CLAUDE_EFFORT` (défaut `low`).
+- Créer une clé : générer une chaîne aléatoire `zn_…`, puis `insert into api_keys (name, key_hash) values ('nom', '<sha256 hex de la clé>')`.
+
+```bash
+curl -H "x-api-key: $ZN_KEY" ".../news-api/topics/informatique-quantique/digest?days=3"
+```
+
 ## Configuration (Settings → Secrets and variables → Actions)
 
 | Nom | Type | Rôle |
