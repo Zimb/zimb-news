@@ -4,24 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zimb News</title>
-<meta name="description" content="Les histoires dont la presse francophone parle le plus en ce moment, résumées par IA et mises à jour toutes les 15 minutes.">
+<meta name="description" content="Les histoires dont la presse francophone parle le plus, suivies et résumées par IA, mises à jour toutes les 15 minutes.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23c2410c'/><path d='M9 10h14L9 22h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
   :root {
     --bg: #faf8f5; --surface: #ffffff; --text: #1c1917; --muted: #6b645d; --line: #e7e2db;
     --accent: #c2410c; --accent-soft: #fff1e8; --chip: #f3efe9;
+    --new-bg: #dcfce7; --new-fg: #15803d; --upd-bg: #dbeafe; --upd-fg: #1d4ed8;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #141210; --surface: #1d1a17; --text: #f2eee9; --muted: #a39b92; --line: #2f2a25;
       --accent: #fb923c; --accent-soft: #2a1b10; --chip: #27231f;
+      --new-bg: #14532d; --new-fg: #bbf7d0; --upd-bg: #1e3a8a; --upd-fg: #bfdbfe;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #141210; --surface: #1d1a17; --text: #f2eee9; --muted: #a39b92; --line: #2f2a25;
     --accent: #fb923c; --accent-soft: #2a1b10; --chip: #27231f;
+    --new-bg: #14532d; --new-fg: #bbf7d0; --upd-bg: #1e3a8a; --upd-fg: #bfdbfe;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -37,43 +40,61 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px #16a34a22; }
   .dot.stale { background: #d97706; box-shadow: 0 0 0 3px #d9770622; }
   .lede { color: var(--muted); margin: 8px 0 28px; font-size: 15px; }
+  .section-title {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    margin: 36px 0 14px; font: 700 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  }
+  .section-title:first-of-type { margin-top: 0; }
   ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
   .story {
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
     padding: 18px 20px; display: grid; grid-template-columns: 34px 1fr; gap: 4px 12px;
   }
-  .rank { font: 700 22px/1.2 Georgia, serif; color: var(--accent); grid-row: span 3; }
+  .story.compact { grid-template-columns: 1fr; padding: 14px 18px; }
+  .rank { font: 700 22px/1.2 Georgia, serif; color: var(--accent); grid-row: span 4; }
   .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .cat { background: var(--accent-soft); color: var(--accent); padding: 1px 9px; border-radius: 999px; font-weight: 600; }
   .badge { padding: 1px 8px; border-radius: 999px; font-weight: 600; font-size: 12px; }
-  .badge.new { background: #dcfce7; color: #15803d; }
-  .badge.upd { background: #dbeafe; color: #1d4ed8; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .badge.new { background: #14532d; color: #bbf7d0; }
-    :root:not([data-theme="light"]) .badge.upd { background: #1e3a8a; color: #bfdbfe; }
-  }
-  :root[data-theme="dark"] .badge.new { background: #14532d; color: #bbf7d0; }
-  :root[data-theme="dark"] .badge.upd { background: #1e3a8a; color: #bfdbfe; }
-  .since { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .badge.new { background: var(--new-bg); color: var(--new-fg); }
+  .badge.upd { background: var(--upd-bg); color: var(--upd-fg); }
   h2 { margin: 2px 0 0; font-size: 18px; line-height: 1.35; }
+  .compact h2 { font-size: 16px; }
   .summary { margin: 4px 0 0; }
-  details { grid-column: 2; margin-top: 8px; font-size: 14px; }
+  .since { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .more { grid-column: 2; display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 14px; }
+  .compact .more { grid-column: 1; }
+  details { min-width: 0; }
+  details[open] { flex-basis: 100%; }
   summary { cursor: pointer; color: var(--muted); }
   summary:hover { color: var(--text); }
-  .sources { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .sources, .versions { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
   .sources a { color: var(--text); text-decoration: none; display: flex; gap: 8px; align-items: baseline; }
   .sources a:hover .t { text-decoration: underline; }
   .sources .d { background: var(--chip); border-radius: 6px; padding: 0 7px; font-size: 12px; color: var(--muted); white-space: nowrap; }
   .sources .t { overflow-wrap: anywhere; }
-  .empty, .error { text-align: center; color: var(--muted); padding: 48px 16px; border: 1px dashed var(--line); border-radius: 14px; }
+  .versions li { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; }
+  .versions .when { font-size: 12px; color: var(--muted); }
+  .versions .vt { font-weight: 600; }
+  .empty, .error { text-align: center; color: var(--muted); padding: 40px 16px; border: 1px dashed var(--line); border-radius: 14px; }
   .skeleton { height: 128px; border-radius: 14px; background: linear-gradient(90deg, var(--surface), var(--chip), var(--surface)); background-size: 200% 100%; animation: sh 1.4s infinite; border: 1px solid var(--line); }
   @keyframes sh { to { background-position: -200% 0; } }
+  .day { margin: 18px 0 2px; font-weight: 700; font-size: 14px; color: var(--muted); }
+  .day:first-child { margin-top: 0; }
+  #sentinel { height: 1px; }
+  .loader { text-align: center; color: var(--muted); font-size: 14px; padding: 18px 0; }
+  .fresh {
+    position: sticky; top: 12px; z-index: 5; display: none; margin: 0 auto 14px; width: fit-content;
+    background: var(--accent); color: #fff; border: 0; border-radius: 999px; padding: 8px 16px;
+    font: 600 14px/1.2 inherit; cursor: pointer; box-shadow: 0 4px 16px #0003;
+  }
+  .fresh.show { display: block; }
   footer { margin-top: 40px; color: var(--muted); font-size: 13px; line-height: 1.6; }
   footer a { color: inherit; }
   @media (max-width: 520px) {
     .story { grid-template-columns: 1fr; padding: 16px; }
     .rank { grid-row: auto; font-size: 18px; }
-    details { grid-column: 1; }
+    .more { grid-column: 1; }
   }
 </style>
 </head>
@@ -83,17 +104,24 @@
     <h1>Zimb <span>News</span></h1>
     <div class="status" id="status"><span class="dot"></span><span>Chargement…</span></div>
   </header>
-  <p class="lede">Les histoires dont la presse francophone parle le plus ces 3 dernières heures, suivies et résumées par IA. Mis à jour toutes les 15 minutes.</p>
+  <p class="lede">Les histoires dont la presse francophone parle le plus, suivies et résumées par IA. Mis à jour toutes les 15 minutes.</p>
 
-  <ol id="list" aria-live="polite">
+  <h2 class="section-title"><span>En ce moment</span><span>3 dernières heures</span></h2>
+  <ol id="top" aria-live="polite">
     <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
   </ol>
+
+  <h2 class="section-title"><span>Toutes les histoires</span><span>de la plus récente à la plus ancienne</span></h2>
+  <button class="fresh" id="fresh" type="button"></button>
+  <div id="feed"></div>
+  <div id="sentinel"></div>
+  <div class="loader" id="loader"></div>
 
   <footer>
     Les résumés sont générés automatiquement par Claude (Anthropic) à partir d'extraits d'articles repérés par
     <a href="https://www.gdeltproject.org/" rel="noopener">GDELT</a>. Ils peuvent contenir des erreurs : consultez les articles d'origine.
-    Le classement reflète le nombre de médias différents qui ont écrit sur chaque histoire ces 3 dernières heures
-    (les plus récents comptent davantage), pas leur audience.
+    « En ce moment » classe les histoires selon le nombre de médias différents qui ont écrit dessus ces 3 dernières heures
+    (les plus récents comptent davantage), pas selon leur audience. Les versions précédentes des résumés restent consultables.
   </footer>
 </div>
 
@@ -101,94 +129,208 @@
   const SUPABASE_URL = "https://rtygalgkixjttiezdcym.supabase.co";
   const SUPABASE_KEY = "sb_publishable_BvcBt8lwp1wM5sD5_zn2rQ_R7ngt8-p"; // clé publique, lecture seule (RLS)
   const REFRESH_MS = 5 * 60 * 1000;
-  const HOURS = 3;   // fenêtre d'activité du classement
-  const LIMIT = 10;
+  const HOURS = 3;
+  const TOP = 10;
+  const PAGE = 20;
 
-  const $list = document.getElementById("list");
-  const $status = document.getElementById("status");
+  const $ = (id) => document.getElementById(id);
+  const $top = $("top"), $feed = $("feed"), $status = $("status"), $loader = $("loader"), $fresh = $("fresh");
 
+  const api = async (path) => {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: SUPABASE_KEY } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const safeUrl = (u) => /^https?:\/\//i.test(u) ? u : "#";
+  const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+  const hhmm = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const dayLabel = (d) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const that = new Date(d); that.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - that) / 86400000);
+    if (diff === 0) return "Aujourd'hui";
+    if (diff === 1) return "Hier";
+    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  };
 
   function ago(date) {
     const min = Math.round((Date.now() - date.getTime()) / 60000);
     if (min < 1) return "à l'instant";
     if (min < 60) return `il y a ${min} min`;
     const h = Math.floor(min / 60);
-    return `il y a ${h} h${min % 60 ? " " + String(min % 60).padStart(2, "0") : ""}`;
+    if (h < 24) return `il y a ${h} h${min % 60 ? " " + String(min % 60).padStart(2, "0") : ""}`;
+    return `le ${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} à ${hhmm(date)}`;
   }
 
-  const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
-
-  function duration(from) {
-    const min = Math.max(1, Math.round((Date.now() - from.getTime()) / 60000));
+  function duration(from, to = new Date()) {
+    const min = Math.max(1, Math.round((to - from) / 60000));
     if (min < 60) return `${min} min`;
     const h = Math.floor(min / 60);
     return h < 48 ? `${h} h` : `${Math.floor(h / 24)} jours`;
   }
 
-  function render(rows, run) {
-    if (run) {
-      const updated = new Date(run.finished_at);
-      const stale = Date.now() - updated.getTime() > 45 * 60000;
-      const hhmm = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-      $status.innerHTML = `<span class="dot${stale ? " stale" : ""}"></span><span>Mis à jour ${ago(updated)} · articles jusqu'à ${hhmm(new Date(run.window_end))}</span>`;
-    }
-    if (!rows.length) {
-      $list.innerHTML = `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
-      if (!run) $status.innerHTML = `<span class="dot stale"></span><span>En attente de données</span>`;
-      return;
-    }
-
-    $list.innerHTML = rows.map((s, i) => {
-      const sources = (s.sources || []);
-      const first = new Date(s.first_seen), upd = new Date(s.updated_at);
-      const isNew = Date.now() - first.getTime() < 45 * 60000;
-      const isUpd = !isNew && upd > first && Date.now() - upd.getTime() < 45 * 60000;
-      const badge = isNew ? `<span class="badge new">Nouveau</span>`
-                  : isUpd ? `<span class="badge upd">Mis à jour ${ago(upd)}</span>` : "";
-      const total = s.n_sources_total > s.n_sources_window ? ` (${s.n_sources_total} au total)` : "";
-      return `
-      <li class="story">
-        <div class="rank">${i + 1}</div>
+  function card(s, { rank = null, compact = false } = {}) {
+    const sources = s.sources || [];
+    const first = new Date(s.first_seen), last = new Date(s.last_seen), upd = new Date(s.updated_at);
+    const recent = (d) => Date.now() - d.getTime() < 45 * 60000;
+    const isNew = recent(first);
+    const isUpd = !isNew && upd > first && recent(upd);
+    const badge = isNew ? `<span class="badge new">Nouveau</span>`
+                : isUpd ? `<span class="badge upd">Mis à jour ${ago(upd)}</span>` : "";
+    const counts = rank !== null
+      ? `${plural(s.n_sources_window, "média")} en ${HOURS} h${s.n_sources_total > s.n_sources_window ? ` (${s.n_sources_total} au total)` : ""}`
+      : plural(s.n_sources_total, "média");
+    const since = rank !== null || recent(last)
+      ? `Suivie depuis ${duration(first)}`
+      : `Suivie pendant ${duration(first, last)} · dernier article ${ago(last)}`;
+    const versions = s.n_versions > 1
+      ? `<details data-versions="${s.id}"><summary>Historique (${s.n_versions} versions)</summary><ul class="versions"><li class="when">Chargement…</li></ul></details>`
+      : "";
+    return `
+      <li class="story${compact ? " compact" : ""}">
+        ${rank !== null ? `<div class="rank">${rank}</div>` : ""}
         <div class="meta"><span class="cat">${esc(s.category)}</span>${badge}
-          <span>${plural(s.n_sources_window, "média")} en ${HOURS} h${total} · ${plural(s.n_articles_total, "article")}</span></div>
+          <span>${counts} · ${plural(s.n_articles_total, "article")}</span></div>
         <h2>${esc(s.title)}</h2>
         <p class="summary">${esc(s.summary)}</p>
-        <div class="since">Suivie depuis ${duration(first)}</div>
-        <details>
-          <summary>Voir les ${sources.length} source${sources.length > 1 ? "s" : ""}</summary>
-          <ul class="sources">${sources.map((a) => `
-            <li><a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener nofollow">
-              <span class="d">${esc(a.domain)}</span><span class="t">${esc(a.title || a.url)}</span></a></li>`).join("")}
-          </ul>
-        </details>
+        <div class="since">${since}</div>
+        <div class="more">
+          <details><summary>${plural(sources.length, "source")}</summary>
+            <ul class="sources">${sources.map((a) => `
+              <li><a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener nofollow">
+                <span class="d">${esc(a.domain)}</span><span class="t">${esc(a.title || a.url)}</span></a></li>`).join("")}
+            </ul>
+          </details>
+          ${versions}
+        </div>
       </li>`;
-    }).join("");
   }
 
-  async function load() {
+  // Historique des versions, chargé à l'ouverture
+  document.addEventListener("toggle", async (e) => {
+    const d = e.target;
+    if (!(d instanceof HTMLDetailsElement) || !d.open || !d.dataset.versions || d.dataset.loaded) return;
+    d.dataset.loaded = "1";
+    const list = d.querySelector(".versions");
     try {
-      const headers = { apikey: SUPABASE_KEY };
-      const [stories, runs] = await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/rpc/trending?hours=${HOURS}&lim=${LIMIT}`, { headers }),
-        fetch(`${SUPABASE_URL}/rest/v1/runs?select=finished_at,window_end&status=in.(ok,no_data)&order=id.desc&limit=1`, { headers }),
+      const rows = await api(`thread_versions?thread_id=eq.${encodeURIComponent(d.dataset.versions)}&select=title,summary,created_at&order=created_at.desc`);
+      list.innerHTML = rows.map((v, i) => `
+        <li><div class="when">${i === 0 ? "Actuelle · " : ""}${ago(new Date(v.created_at))}</div>
+          <div class="vt">${esc(v.title)}</div><div>${esc(v.summary)}</div></li>`).join("");
+    } catch {
+      list.innerHTML = `<li class="when">Historique indisponible pour le moment.</li>`;
+      delete d.dataset.loaded;
+    }
+  }, true);
+
+  // ---------------------------------------------------------------- En ce moment
+  async function loadTop() {
+    try {
+      const [rows, runs] = await Promise.all([
+        api(`rpc/top_stories?hours=${HOURS}&lim=${TOP}`),
+        api(`runs?select=finished_at,window_end&status=in.(ok,no_data)&order=id.desc&limit=1`).catch(() => []),
       ]);
-      if (!stories.ok) throw new Error(`HTTP ${stories.status}`);
-      const run = runs.ok ? (await runs.json())[0] : null;
-      render(await stories.json(), run);
+      const run = runs[0];
+      if (run) {
+        const updated = new Date(run.finished_at);
+        const stale = Date.now() - updated.getTime() > 45 * 60000;
+        $status.innerHTML = `<span class="dot${stale ? " stale" : ""}"></span><span>Mis à jour ${ago(updated)} · articles jusqu'à ${hhmm(new Date(run.window_end))}</span>`;
+      }
+      // Ne pas refermer ce que le lecteur a ouvert
+      const open = [...$top.querySelectorAll("details[open]")].length;
+      if (open && $top.querySelector(".story")) return;
+      $top.innerHTML = rows.length
+        ? rows.map((s, i) => card(s, { rank: i + 1 })).join("")
+        : `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
     } catch (e) {
       console.error(e);
-      if (!$list.querySelector(".story")) {
-        $list.innerHTML = `<li class="error">Impossible de charger les histoires pour le moment. Nouvel essai dans quelques minutes.</li>`;
-      }
+      if (!$top.querySelector(".story")) $top.innerHTML = `<li class="error">Impossible de charger les histoires pour le moment.</li>`;
       $status.innerHTML = `<span class="dot stale"></span><span>Connexion impossible</span>`;
     }
   }
 
-  load();
-  setInterval(load, REFRESH_MS);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+  // ---------------------------------------------------------------- Fil complet (défilement infini)
+  let cursor = null, loading = false, done = false, newestSeen = null;
+  const seen = new Set();
+  const days = new Map(); // libellé du jour → <ol>
+
+  function dayList(label) {
+    let ol = days.get(label);
+    if (!ol) {
+      $feed.insertAdjacentHTML("beforeend", `<div class="day">${esc(label)}</div><ol></ol>`);
+      ol = $feed.lastElementChild;
+      days.set(label, ol);
+    }
+    return ol;
+  }
+
+  function appendStories(rows) {
+    for (const s of rows) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      dayList(dayLabel(new Date(s.last_seen))).insertAdjacentHTML("beforeend", card(s, { compact: true }));
+    }
+  }
+
+  async function loadMore() {
+    if (loading || done) return;
+    loading = true;
+    $loader.textContent = "Chargement…";
+    try {
+      const q = cursor
+        ? `rpc/feed?lim=${PAGE}&before_ts=${encodeURIComponent(cursor.ts)}&before_id=${cursor.id}`
+        : `rpc/feed?lim=${PAGE}`;
+      const rows = await api(q);
+      if (!cursor && rows[0]) newestSeen = rows[0].last_seen;
+      if (rows.length) {
+        const last = rows[rows.length - 1];
+        cursor = { ts: last.last_seen, id: last.id };
+        appendStories(rows);
+      }
+      if (rows.length < PAGE) {
+        done = true;
+        $loader.textContent = seen.size ? "Vous êtes arrivé au début du fil." : "";
+      } else {
+        $loader.textContent = "";
+      }
+    } catch (e) {
+      console.error(e);
+      $loader.textContent = "Chargement impossible, nouvel essai en descendant.";
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Signale les histoires apparues depuis le chargement, sans toucher à la lecture en cours
+  async function checkFresh() {
+    if (!newestSeen) return;
+    try {
+      const rows = await api(`rpc/feed?lim=50`);
+      const n = rows.filter((s) => s.last_seen > newestSeen).length;
+      if (n) {
+        $fresh.textContent = `${plural(n, "histoire")} mise${n > 1 ? "s" : ""} à jour · afficher`;
+        $fresh.classList.add("show");
+      }
+    } catch { /* on réessaiera au prochain cycle */ }
+  }
+
+  $fresh.addEventListener("click", () => {
+    $fresh.classList.remove("show");
+    cursor = null; done = false; newestSeen = null; seen.clear(); days.clear();
+    $feed.innerHTML = "";
+    loadMore();
+    $feed.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) loadMore();
+  }, { rootMargin: "800px 0px" }).observe($("sentinel"));
+
+  loadTop();
+  loadMore();
+  setInterval(() => { loadTop(); checkFresh(); }, REFRESH_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadTop(); checkFresh(); } });
 </script>
 </body>
 </html>

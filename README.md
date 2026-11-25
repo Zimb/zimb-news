@@ -20,7 +20,10 @@ GitHub Actions (toutes les 15 min)                Supabase (Postgres)           
 - **Pas de double traitement** : les adresses déjà vues (`seen_urls`) ne sont jamais renvoyées à Claude.
 - **Classement** (`trending`) : somme, sur les médias ayant écrit leur propre article sur l'histoire ces 3 dernières heures, d'un poids qui va de 1 (article de moins de 30 min) à 0,25 (fin de fenêtre). Les reprises syndiquées sont affichées mais ne comptent pas dans le score.
 - Seuls de courts extraits (320 caractères) sont stockés, et ils ne sont pas exposés publiquement.
-- Les tables `stories` / `story_articles` et la vue `latest_stories` datent de la première version et ne sont plus alimentées.
+- **Rien n'est écrasé** : chaque titre et résumé est conservé dans `thread_versions` (trigger sur `threads`). Le site affiche l'historique des versions.
+- **Site** : « En ce moment » (rpc `top_stories`, 10 histoires) puis le fil complet de toutes les histoires (rpc `feed`, pagination par curseur, défilement infini). Le rafraîchissement automatique ne touche pas au fil : un bouton signale les histoires mises à jour.
+- Un seul appel à Claude par passage : tous les nouveaux articles de la fenêtre (jusqu'à 400) et les histoires actives sont envoyés ensemble.
+- Les tables `stories` / `story_articles`, la vue `latest_stories` et la fonction `trending` (utilisée par `top_stories`) datent des premières versions ; les deux premières ne sont plus alimentées.
 
 ## Configuration (Settings → Secrets and variables → Actions)
 
