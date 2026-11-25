@@ -76,10 +76,17 @@
   .tag.arXiv { background: #fee2e2; color: #991b1b; }
   .tag.HF { background: #fef3c7; color: #92400e; }
   .tag.HN { background: #ffedd5; color: #9a3412; }
+  .tag.GH { background: #e0e7ff; color: #3730a3; }
+  .tag.BL { background: #dcfce7; color: #166534; }
+  .sig { display: inline-block; margin-left: 6px; font-size: 11.5px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+  .section { margin: 18px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+  .hl.rel h4::before { content: "▶ "; color: var(--accent); }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .tag.arXiv { background: #450a0a; color: #fecaca; }
     :root:not([data-theme="light"]) .tag.HF { background: #451a03; color: #fde68a; }
     :root:not([data-theme="light"]) .tag.HN { background: #431407; color: #fed7aa; }
+    :root:not([data-theme="light"]) .tag.GH { background: #1e1b4b; color: #c7d2fe; }
+    :root:not([data-theme="light"]) .tag.BL { background: #052e16; color: #bbf7d0; }
   }
   .trends { margin: 14px 0 0; padding-left: 20px; }
   .meta { font-size: 13px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
@@ -95,7 +102,7 @@
     <h1>Zimb <span>Veille</span></h1>
     <a href="./">← Retour à l'actualité</a>
   </header>
-  <p class="lede">Créez un sujet tech ou science : l'IA en fait la synthèse sur 1 à 3 jours à partir d'arXiv, des articles mis en avant sur Hugging Face et de Hacker News, et répond à vos questions en citant ses sources.</p>
+  <p class="lede">Veille IA pour ingénieurs et chercheurs : créez un sujet, l'IA en fait la synthèse sur 1 à 3 jours (versions GitHub, modèles Hugging Face, annonces des labos, articles arXiv, Hacker News), en signalant le code et les poids publiés, et répond à vos questions en citant ses sources.</p>
 
   <section class="panel" id="keyPanel">
     <h2>Clé d'accès</h2>
@@ -174,11 +181,12 @@
     return h < 24 ? `il y a ${h} h` : new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   }
 
-  const tagClass = (s) => s === "arXiv" ? "arXiv" : s === "Hugging Face" ? "HF" : "HN";
+  const tagClass = (s) => ({ "arXiv": "arXiv", "Hugging Face": "HF", "Modèle HF": "HF", "Hacker News": "HN", "GitHub": "GH", "Blog": "BL" }[s] || "");
   const sourceList = (sources) => !sources?.length ? "" : `<ul class="srcs">${sources.map((s) => `
     <li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener nofollow">
       <span class="tag ${tagClass(s.source)}">${esc(s.source)}</span>
-      <span class="t">${esc(s.title)}${s.score ? ` <span class="note">· ${esc(s.score)}</span>` : ""}</span></a></li>`).join("")}</ul>`;
+      <span class="t">${esc(s.title)}${s.score ? ` <span class="note">· ${esc(s.score)}</span>` : ""}
+        ${(s.signals || []).map((x) => `<span class="sig">${esc(x)}</span>`).join("")}</span></a></li>`).join("")}</ul>`;
 
   // ------------------------------------------------------------ Clé et quota
   async function refreshUsage() {
@@ -273,6 +281,14 @@
       $("digest").innerHTML = `
         <h3>${esc(c.headline)}</h3>
         <p class="overview">${esc(c.overview)}</p>
+        ${c.releases?.length ? `<p class="section">Sorties concrètes</p>` : ""}
+        ${(c.releases || []).map((h) => `
+          <div class="hl rel">
+            <h4>${esc(h.title)}</h4>
+            <p>${esc(h.summary)}</p>
+            ${sourceList(h.sources)}
+          </div>`).join("")}
+        ${c.highlights?.length ? `<p class="section">Avancées de recherche</p>` : ""}
         ${(c.highlights || []).map((h) => `
           <div class="hl">
             <h4>${esc(h.title)}</h4>
