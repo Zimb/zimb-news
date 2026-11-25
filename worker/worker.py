@@ -175,20 +175,26 @@ def public_fields(a: dict) -> dict:
 SYSTEM = f"""Tu es secrétaire de rédaction pour un site qui suit les histoires dont la presse francophone parle le plus en ce moment.
 
 On te donne deux listes :
-- les HISTOIRES DÉJÀ SUIVIES ces dernières heures (identifiant, catégorie, titre, résumé) ;
+- les HISTOIRES DÉJÀ SUIVIES ces dernières heures (identifiant, catégorie, titre, résumé abrégé, évolutions déjà connues) ;
 - les NOUVEAUX ARTICLES repérés par GDELT ces 15 dernières minutes : identifiant, média, titre déduit de l'URL, début du texte. Le texte est reconstitué automatiquement : il peut commencer au milieu d'une phrase, être dans le désordre ou contenir des répétitions.
 
 Ta tâche :
 1. Pour chaque nouvel article d'actualité, décide s'il traite d'une histoire déjà suivie (même événement précis, ou sa suite directe) ou d'une nouvelle histoire. Rattache-le à l'histoire existante dès que c'est le cas : il ne faut jamais créer de doublon d'une histoire déjà suivie, même si l'angle ou la formulation diffère.
 2. Regroupe entre eux les nouveaux articles qui parlent d'une même nouvelle histoire. Un regroupement porte sur un événement précis, pas seulement sur un thème général.
 3. Écarte ce qui n'est pas de l'actualité : programmes TV, horoscopes, jeux, promotions, recettes, conseils pratiques intemporels, pages de service. Un article peut n'appartenir à aucun groupe.
-4. Pour chaque groupe, donne en français :
-   - existing_story_id : l'identifiant de l'histoire déjà suivie, ou 0 pour une nouvelle histoire ;
-   - title : titre factuel de 90 caractères maximum. Pour une histoire existante, garde le titre actuel, sauf si les nouveaux articles apportent un fait nouveau important (bilan, décision, résultat) ;
-   - summary : résumé neutre de 2 à 3 phrases, fondé uniquement sur les extraits et le résumé existant, sans rien inventer ni extrapoler. Pour une histoire existante, recopie le résumé actuel s'il n'y a rien de nouveau ; sinon intègre l'information nouvelle en gardant l'essentiel de l'ancien ;
+4. Pour une NOUVELLE histoire (existing_story_id = 0), donne en français :
+   - title : titre factuel de 90 caractères maximum ;
+   - summary : résumé neutre de 2 à 3 phrases, fondé uniquement sur les extraits, sans rien inventer ni extrapoler ;
+   - update : chaîne vide ;
    - category : parmi {", ".join(CATEGORIES)} ;
    - article_ids : les identifiants des nouveaux articles du groupe.
-5. Une nouvelle histoire couverte par un seul article n'est retenue que si elle est manifestement importante. N'inclus une histoire existante que si au moins un nouvel article s'y rattache."""
+5. Pour une histoire DÉJÀ SUIVIE (existing_story_id = son identifiant), ne réécris pas le résumé :
+   - title : chaîne vide, sauf si un fait nouveau change la nature de l'histoire (bilan, décision, dénouement) ; alors un nouveau titre ;
+   - summary : chaîne vide ;
+   - update : UNE phrase courte (25 mots maximum) avec le fait nouveau apporté par les nouveaux articles, seulement s'il n'est ni dans le résumé ni dans les évolutions déjà connues ; sinon chaîne vide ;
+   - category : la catégorie actuelle ;
+   - article_ids : les identifiants des nouveaux articles rattachés.
+6. Une nouvelle histoire couverte par un seul article n'est retenue que si elle est manifestement importante. N'inclus une histoire existante que si au moins un nouvel article s'y rattache."""
 
 SCHEMA = {
     "type": "object",
@@ -201,10 +207,11 @@ SCHEMA = {
                     "existing_story_id": {"type": "integer"},
                     "title": {"type": "string"},
                     "summary": {"type": "string"},
+                    "update": {"type": "string"},
                     "category": {"type": "string", "enum": CATEGORIES},
                     "article_ids": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["existing_story_id", "title", "summary", "category", "article_ids"],
+                "required": ["existing_story_id", "title", "summary", "update", "category", "article_ids"],
                 "additionalProperties": False,
             },
         }
@@ -215,9 +222,12 @@ SCHEMA = {
 
 
 def build_prompt(articles: list[dict], threads: list[dict]) -> str:
-    known = "\n".join(
-        f"[#{t['id']}] ({t['category']}) {t['title']} — {t['summary']}" for t in threads
-    ) or "(aucune)"
+    def thread_line(t: dict) -> str:
+        line = f"[#{t['id']}] ({t['category']}) {t['title']} — {t['summary']}"
+        if t.get("updates"):
+            line += "\n    Évolutions déjà connues : " + " | ".join(t["updates"])
+        return line
+    known = "\n".join(thread_line(t) for t in threads) or "(aucune)"
     lines = []
     for i, a in enumerate(articles):
         extra = f" (+{len(a['mirrors'])} reprises)" if a["mirrors"] else ""
@@ -267,10 +277,16 @@ def build_groups(raw: list[dict], articles: list[dict], threads: list[dict]) -> 
         for i in ids:
             members.append({"url": articles[i]["url"], "mirror": False, "_a": articles[i]})
             members += [{"url": m["url"], "mirror": True, "_a": m} for m in articles[i]["mirrors"]]
+        title, summary, update = g["title"].strip()[:200], g["summary"].strip(), g["update"].strip()[:300]
+        if not thread_id and not (title and summary):
+            # Nouvelle histoire incomplète : on ne peut pas l'afficher, on l'ignore
+            log(f"  ! groupe ignoré (nouvelle histoire sans titre ou résumé) : {g['article_ids']}")
+            continue
         groups.append({
             "thread_id": thread_id,
-            "title": g["title"].strip()[:200],
-            "summary": g["summary"].strip(),
+            "title": title,
+            "summary": summary if not thread_id else "",   # le résumé d'une histoire suivie n'est jamais réécrit
+            "update": update if thread_id else "",
             "category": g["category"],
             "members": members,
         })
@@ -343,7 +359,7 @@ def main() -> int:
     known = known_urls(http, [r["url"] for r in rows])
     fresh = [r for r in rows if r["url"] not in known]
     articles = group_mirrors(fresh)
-    threads = rpc(http, "active_threads", {"hours": ACTIVE_HOURS, "lim": MAX_THREADS})
+    threads = rpc(http, "active_threads_v2", {"hours": ACTIVE_HOURS, "lim": MAX_THREADS})
     log(f"{len(rows)} articles en français, {len(known)} déjà vus, "
         f"{len(articles)} nouveaux articles distincts, {len(threads)} histoires actives")
 
@@ -389,8 +405,9 @@ def main() -> int:
     for g in groups:
         n = sum(1 for m in g["members"] if not m["mirror"])
         if g["thread_id"]:
-            changed = " (titre mis à jour)" if g["title"] != titles[g["thread_id"]] else ""
-            log(f"  + #{g['thread_id']} ← {n} article(s) : {g['title']}{changed}")
+            changed = f" (nouveau titre : {g['title']})" if g["title"] and g["title"] != titles[g["thread_id"]] else ""
+            evo = f" — évolution : {g['update']}" if g["update"] else ""
+            log(f"  + #{g['thread_id']} ← {n} article(s) : {titles[g['thread_id']]}{changed}{evo}")
         else:
             log(f"  * nouvelle ← {n} article(s) : {g['title']}")
     return 0

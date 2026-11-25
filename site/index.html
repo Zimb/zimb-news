@@ -86,6 +86,10 @@
   .sources .t { overflow-wrap: anywhere; }
   .versions li { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; }
   .versions .when { font-size: 12px; color: var(--muted); }
+  .evo:empty { display: none; }
+  .evo { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; font-size: 14.5px; }
+  .evo-label { display: block; font-size: 12px; font-weight: 600; color: var(--accent); }
+  html[data-skin="journal"] .evo { background: transparent; border-left: 2px solid var(--accent); border-radius: 0; font-style: italic; }
   .versions .vt { font-weight: 600; }
   .empty, .error { text-align: center; color: var(--muted); padding: 40px 16px; border: 1px dashed var(--line); border-radius: 14px; }
   .skeleton { height: 128px; border-radius: 14px; background: linear-gradient(90deg, var(--surface), var(--chip), var(--surface)); background-size: 200% 100%; animation: sh 1.4s infinite; border: 1px solid var(--line); }
@@ -336,9 +340,6 @@
     const since = rank !== null || recent(last)
       ? `Suivie depuis ${duration(first)}`
       : `Suivie pendant ${duration(first, last)} · dernier article ${ago(last)}`;
-    const versions = s.n_versions > 1
-      ? `<details data-versions="${s.id}"><summary>Historique (${s.n_versions} versions)</summary><ul class="versions"><li class="when">Chargement…</li></ul></details>`
-      : "";
     return `
       <li class="story${compact ? " compact" : ""}" data-id="${s.id}">
         ${rank !== null ? `<div class="rank">${rank}</div>` : ""}
@@ -346,6 +347,7 @@
           <span>${counts} · ${plural(s.n_articles_total, "article")}</span></div>
         <h2>${esc(s.title)}</h2>
         <p class="summary">${esc(s.summary)}</p>
+        <div class="evo" data-evo="${s.id}"></div>
         <div class="since">${since}</div>
         <div class="more">
           <details><summary>${plural(sources.length, "source")}</summary>
@@ -354,27 +356,39 @@
                 <span class="d">${esc(a.domain)}</span><span class="t">${esc(a.title || a.url)}</span></a></li>`).join("")}
             </ul>
           </details>
-          ${versions}
+          <span data-timeline="${s.id}"></span>
         </div>
       </li>`;
   }
 
-  // Historique des versions, chargé à l'ouverture
-  document.addEventListener("toggle", async (e) => {
-    const d = e.target;
-    if (!(d instanceof HTMLDetailsElement) || !d.open || !d.dataset.versions || d.dataset.loaded) return;
-    d.dataset.loaded = "1";
-    const list = d.querySelector(".versions");
+  // Évolutions des histoires : une seule requête pour toutes les cartes affichées
+  async function loadUpdates(root) {
+    const slots = [...root.querySelectorAll("[data-evo]:not([data-done])")];
+    const ids = [...new Set(slots.map((el) => el.dataset.evo))];
+    if (!ids.length) return;
+    slots.forEach((el) => (el.dataset.done = "1"));
+    let rows = [];
     try {
-      const rows = await api(`thread_versions?thread_id=eq.${encodeURIComponent(d.dataset.versions)}&select=title,summary,created_at&order=created_at.desc`);
-      list.innerHTML = rows.map((v, i) => `
-        <li><div class="when">${i === 0 ? "Actuelle · " : ""}${ago(new Date(v.created_at))}</div>
-          <div class="vt">${esc(v.title)}</div><div>${esc(v.summary)}</div></li>`).join("");
-    } catch {
-      list.innerHTML = `<li class="when">Historique indisponible pour le moment.</li>`;
-      delete d.dataset.loaded;
+      rows = await api(`thread_updates?thread_id=in.(${ids.join(",")})&select=thread_id,text,created_at&order=created_at.desc`);
+    } catch { slots.forEach((el) => delete el.dataset.done); return; }
+    const byThread = new Map();
+    for (const u of rows) {
+      if (!byThread.has(u.thread_id)) byThread.set(u.thread_id, []);
+      byThread.get(u.thread_id).push(u);
     }
-  }, true);
+    for (const el of slots) {
+      const list = byThread.get(Number(el.dataset.evo)) || [];
+      if (!list.length) continue;
+      const last = list[0];
+      el.innerHTML = `<span class="evo-label">Dernière évolution · ${ago(new Date(last.created_at))}</span> ${esc(last.text)}`;
+      const card = el.closest(".story");
+      const slot = card && card.querySelector(`[data-timeline="${el.dataset.evo}"]`);
+      if (slot && list.length > 1) {
+        slot.outerHTML = `<details><summary>Fil de l'histoire (${list.length} évolutions)</summary>
+          <ul class="versions">${list.map((u) => `<li><div class="when">${ago(new Date(u.created_at))}</div><div>${esc(u.text)}</div></li>`).join("")}</ul></details>`;
+      }
+    }
+  }
 
   // ---------------------------------------------------------------- En ce moment
   let topIds = new Set();
@@ -415,6 +429,7 @@
         ? rows.map((s, i) => card(s, { rank: i + 1 })).join("")
         : `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
       syncTopWithFeed(new Set(rows.map((s) => s.id)));
+      loadUpdates($top);
     } catch (e) {
       console.error(e);
       if (!$top.querySelector(".story")) $top.innerHTML = `<li class="error">Impossible de charger les histoires pour le moment.</li>`;
@@ -460,6 +475,7 @@
         const last = rows[rows.length - 1];
         cursor = { ts: last.last_seen, id: last.id };
         appendStories(rows);
+        loadUpdates($feed);
       }
       if (rows.length < PAGE) {
         done = true;
