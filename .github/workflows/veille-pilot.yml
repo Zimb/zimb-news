@@ -1,14 +1,22 @@
-name: planete-pilote
+name: veille-pilote
 
-# Trie les articles « planète » d'une journée (OpenAlex) et rédige les fiches des plus prometteurs.
+# Trie les articles de recherche d'une période (OpenAlex) pour un domaine, et rédige les fiches des plus prometteurs.
 on:
   workflow_dispatch:
     inputs:
-      date:
-        description: "Jour de publication (AAAA-MM-JJ). OpenAlex indexe avec environ 2 jours de retard."
+      profile:
+        description: "Domaine"
+        type: choice
+        options: [planete, dev-ia]
+        default: planete
+      date_from:
+        description: "Premier jour de publication (AAAA-MM-JJ). OpenAlex indexe avec environ 2 jours de retard."
+        default: ""
+      date_to:
+        description: "Dernier jour (vide = un seul jour)"
         default: ""
       top:
-        description: "Nombre de fiches rédigées à partir du texte complet"
+        description: "Nombre de fiches rédigées"
         default: "10"
       write_model:
         description: "Modèle de rédaction"
@@ -31,19 +39,21 @@ jobs:
       - run: pip install "anthropic>=2.14,<3" "httpx>=0.28,<1"
 
       - name: Trier et rédiger
-        run: python tools/planet_pilot.py
+        run: python tools/veille_pilot.py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
-          PILOT_DATE: ${{ inputs.date }}
+          PROFILE: ${{ inputs.profile }}
+          DATE_FROM: ${{ inputs.date_from }}
+          DATE_TO: ${{ inputs.date_to }}
           TOP_FULLTEXT: ${{ inputs.top }}
           WRITE_MODEL: ${{ inputs.write_model }}
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: planet-pilot
+          name: veille-${{ inputs.profile }}
           path: |
-            planet_pilot.json
-            planet_pilot.md
+            veille_*.json
+            veille_*.md
           retention-days: 14
