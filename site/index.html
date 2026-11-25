@@ -111,7 +111,7 @@
     <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
   </ol>
 
-  <h2 class="section-title"><span>Toutes les histoires</span><span>de la plus récente à la plus ancienne</span></h2>
+  <h2 class="section-title"><span>Autres histoires</span><span>de la plus récente à la plus ancienne</span></h2>
   <button class="fresh" id="fresh" type="button"></button>
   <div id="feed"></div>
   <div id="sentinel"></div>
@@ -188,7 +188,7 @@
       ? `<details data-versions="${s.id}"><summary>Historique (${s.n_versions} versions)</summary><ul class="versions"><li class="when">Chargement…</li></ul></details>`
       : "";
     return `
-      <li class="story${compact ? " compact" : ""}">
+      <li class="story${compact ? " compact" : ""}" data-id="${s.id}">
         ${rank !== null ? `<div class="rank">${rank}</div>` : ""}
         <div class="meta"><span class="cat">${esc(s.category)}</span>${badge}
           <span>${counts} · ${plural(s.n_articles_total, "article")}</span></div>
@@ -225,6 +225,25 @@
   }, true);
 
   // ---------------------------------------------------------------- En ce moment
+  let topIds = new Set();
+
+  // Les histoires de « En ce moment » ne sont pas répétées dans « Autres histoires »
+  function syncTopWithFeed(newIds) {
+    const left = [...topIds].filter((id) => !newIds.has(id));
+    topIds = newIds;
+    for (const id of newIds) {
+      $feed.querySelectorAll(`[data-id="${id}"]`).forEach((el) => el.remove());
+    }
+    $feed.querySelectorAll("ol").forEach((ol) => {
+      if (!ol.children.length) { ol.previousElementSibling?.remove(); ol.remove(); }
+    });
+    // Une histoire sortie du classement doit réapparaître dans le fil : on propose d'actualiser
+    if (left.length && (seen.size || done)) {
+      $fresh.textContent = "Le classement a changé · actualiser";
+      $fresh.classList.add("show");
+    }
+  }
+
   async function loadTop() {
     try {
       const [rows, runs] = await Promise.all([
@@ -243,6 +262,7 @@
       $top.innerHTML = rows.length
         ? rows.map((s, i) => card(s, { rank: i + 1 })).join("")
         : `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
+      syncTopWithFeed(new Set(rows.map((s) => s.id)));
     } catch (e) {
       console.error(e);
       if (!$top.querySelector(".story")) $top.innerHTML = `<li class="error">Impossible de charger les histoires pour le moment.</li>`;
@@ -267,7 +287,7 @@
 
   function appendStories(rows) {
     for (const s of rows) {
-      if (seen.has(s.id)) continue;
+      if (seen.has(s.id) || topIds.has(s.id)) continue;
       seen.add(s.id);
       dayList(dayLabel(new Date(s.last_seen))).insertAdjacentHTML("beforeend", card(s, { compact: true }));
     }
@@ -276,6 +296,7 @@
   async function loadMore() {
     if (loading || done) return;
     loading = true;
+    let ok = false;
     $loader.textContent = "Chargement…";
     try {
       const q = cursor
@@ -294,12 +315,16 @@
       } else {
         $loader.textContent = "";
       }
+      ok = true;
     } catch (e) {
       console.error(e);
       $loader.textContent = "Chargement impossible, nouvel essai en descendant.";
     } finally {
       loading = false;
     }
+    // Si la page n'a rien ajouté de visible (histoires déjà dans « En ce moment »), on enchaîne
+    const nearBottom = $("sentinel").getBoundingClientRect().top < window.innerHeight + 800;
+    if (ok && !done && nearBottom) setTimeout(loadMore, 0);
   }
 
   // Signale les histoires apparues depuis le chargement, sans toucher à la lecture en cours
@@ -307,7 +332,7 @@
     if (!newestSeen) return;
     try {
       const rows = await api(`rpc/feed?lim=50`);
-      const n = rows.filter((s) => s.last_seen > newestSeen).length;
+      const n = rows.filter((s) => s.last_seen > newestSeen && !topIds.has(s.id)).length;
       if (n) {
         $fresh.textContent = `${plural(n, "histoire")} mise${n > 1 ? "s" : ""} à jour · afficher`;
         $fresh.classList.add("show");
@@ -323,12 +348,13 @@
     $feed.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
-  new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting)) loadMore();
-  }, { rootMargin: "800px 0px" }).observe($("sentinel"));
-
-  loadTop();
-  loadMore();
+  // Le fil attend le classement, pour savoir quelles histoires exclure
+  loadTop().finally(() => {
+    loadMore();
+    new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore();
+    }, { rootMargin: "800px 0px" }).observe($("sentinel"));
+  });
   setInterval(() => { loadTop(); checkFresh(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadTop(); checkFresh(); } });
 </script>
