@@ -247,8 +247,11 @@ def rank_stories(raw: list[dict], articles: list[dict]) -> list[dict]:
             "n_sources": len({a["domain"] for a in all_arts}),  # médias, reprises comprises
             "urls": [a["url"] for a in all_arts],
             "_articles": all_arts,
+            # médias ayant écrit leur propre article (les reprises syndiquées ne comptent pas)
+            "_independent": len({a["domain"] for a in members}),
         })
-    stories.sort(key=lambda s: (s["n_articles"], s["n_sources"]), reverse=True)
+    # D'abord le nombre de médias indépendants (étendue de la couverture), puis les articles distincts
+    stories.sort(key=lambda s: (s.pop("_independent"), s["n_articles"], s["n_sources"]), reverse=True)
     for rank, s in enumerate(stories[:TOP_STORIES], 1):
         s["rank"] = rank
     return stories[:TOP_STORIES]

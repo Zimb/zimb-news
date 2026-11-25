@@ -14,7 +14,7 @@ GitHub Actions (toutes les 15 min)            Supabase (Postgres)            new
 ```
 
 - Source : [openalphalab/gdelt-news](https://huggingface.co/datasets/openalphalab/gdelt-news), texte reconstitué depuis GDELT Web News NGrams 3.0.
-- Classement : nombre d'articles **distincts** par histoire (les reprises d'un même article par plusieurs titres d'un groupe de presse ne comptent qu'une fois).
+- Classement : d'abord le nombre de **médias différents** qui couvrent l'histoire, puis le nombre d'articles **distincts** (les reprises d'un même article par plusieurs titres d'un groupe de presse ne comptent qu'une fois comme article).
 - Seuls de courts extraits (320 caractères) sont stockés, et ils ne sont pas exposés publiquement.
 
 ## Configuration (Settings → Secrets and variables → Actions)
