@@ -58,6 +58,8 @@ SHORTLIST = 0.35                                             # histoires propos�
 
 CATEGORIES = ["politique", "international", "économie", "société", "faits divers",
               "sport", "culture", "sciences et tech", "santé", "environnement", "autre"]
+MAX_TAGS = 3
+KNOWN_TAGS = 80   # sujets de la semaine rappelés à Claude pour qu'il les réutilise à l'identique
 
 
 def log(*args):
@@ -236,8 +238,9 @@ def public_fields(a: dict) -> dict:
 
 SYSTEM = f"""Tu es secrétaire de rédaction pour un site qui suit les histoires dont la presse francophone parle le plus en ce moment.
 
-On te donne deux listes :
-- les HISTOIRES DÉJÀ SUIVIES ces dernières heures (identifiant, catégorie, titre, résumé abrégé, évolutions déjà connues) ;
+On te donne :
+- les SUJETS DÉJÀ UTILISÉS CETTE SEMAINE, avec le nombre d'histoires qui les portent ;
+- les HISTOIRES DÉJÀ SUIVIES ces dernières heures (identifiant, catégorie, sujets, titre, résumé abrégé, évolutions déjà connues) ;
 - les NOUVEAUX ARTICLES repérés par GDELT ces 15 dernières minutes : identifiant, média, titre déduit de l'URL, début du texte. Le texte est reconstitué automatiquement : il peut commencer au milieu d'une phrase, être dans le désordre ou contenir des répétitions.
 
 Ta tâche :
@@ -249,14 +252,20 @@ Ta tâche :
    - summary : résumé neutre de 2 à 3 phrases, fondé uniquement sur les extraits, sans rien inventer ni extrapoler ;
    - update : chaîne vide ;
    - category : parmi {", ".join(CATEGORIES)} ;
+   - tags : les sujets de l'histoire (voir point 7) ;
    - article_ids : les identifiants des nouveaux articles du groupe.
 5. Pour une histoire DÉJÀ SUIVIE (existing_story_id = son identifiant), ne réécris pas le résumé :
    - title : chaîne vide, sauf si un fait nouveau change la nature de l'histoire (bilan, décision, dénouement) ; alors un nouveau titre ;
    - summary : chaîne vide ;
    - update : UNE phrase courte (25 mots maximum) avec le fait nouveau apporté par les nouveaux articles, seulement s'il n'est ni dans le résumé ni dans les évolutions déjà connues ; sinon chaîne vide ;
    - category : la catégorie actuelle ;
+   - tags : les sujets actuels, complétés ou corrigés si besoin ;
    - article_ids : les identifiants des nouveaux articles rattachés.
-6. Une nouvelle histoire couverte par un seul article n'est retenue que si elle est manifestement importante. N'inclus une histoire existante que si au moins un nouvel article s'y rattache."""
+6. Une nouvelle histoire couverte par un seul article n'est retenue que si elle est manifestement importante. N'inclus une histoire existante que si au moins un nouvel article s'y rattache.
+7. Les sujets (tags) relient entre elles des histoires différentes qui relèvent d'un même dossier au fil de la semaine : 1 à {MAX_TAGS} expressions en minuscules, de 1 à 4 mots, qui nomment le dossier de fond plutôt que l'événement du jour (par exemple « droits de douane », « guerre en ukraine », « budget de l'état », « présidentielle 2027 », « intempéries », « sénégal »).
+   - Réutilise À L'IDENTIQUE un sujet déjà utilisé cette semaine dès qu'il s'applique : c'est ce qui permet de voir qu'un même dossier revient d'un jour à l'autre. N'en crée un nouveau que si aucun ne convient.
+   - Un nom de personne n'est un sujet que si elle est elle-même le dossier (par exemple « donald trump » pour sa politique commerciale), pas pour une simple déclaration.
+   - Pas de sujet générique qui ne relie rien (« politique », « actualité », « décès », « faits divers », « justice »), ni de reprise de la catégorie."""
 
 SCHEMA = {
     "type": "object",
@@ -271,9 +280,10 @@ SCHEMA = {
                     "summary": {"type": "string"},
                     "update": {"type": "string"},
                     "category": {"type": "string", "enum": CATEGORIES},
+                    "tags": {"type": "array", "items": {"type": "string"}},
                     "article_ids": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["existing_story_id", "title", "summary", "update", "category", "article_ids"],
+                "required": ["existing_story_id", "title", "summary", "update", "category", "tags", "article_ids"],
                 "additionalProperties": False,
             },
         }
@@ -283,11 +293,14 @@ SCHEMA = {
 }
 
 
-def build_prompt(articles: list[dict], threads: list[dict], probe_of: dict[int, int] | None = None) -> str:
-    """probe_of : index dans `articles` → histoire à laquelle l'article est déjà rattaché."""
+def build_prompt(articles: list[dict], threads: list[dict], probe_of: dict[int, int] | None = None,
+                 known_tags: list[dict] | None = None) -> str:
+    """probe_of : index dans `articles` → histoire à laquelle l'article est déjà rattaché.
+    known_tags : sujets de la semaine ({tag, n_threads}), à réutiliser à l'identique."""
     probe_of = probe_of or {}
     def thread_line(t: dict) -> str:
-        line = f"[#{t['id']}] ({t['category']}) {t['title']} — {t['summary']}"
+        tags = f" [sujets : {', '.join(t['tags'])}]" if t.get("tags") else ""
+        line = f"[#{t['id']}] ({t['category']}){tags} {t['title']} — {t['summary']}"
         if t.get("updates"):
             line += "\n    Évolutions déjà connues : " + " | ".join(t["updates"])
         return line
@@ -298,7 +311,9 @@ def build_prompt(articles: list[dict], threads: list[dict], probe_of: dict[int, 
         if i in probe_of:
             extra += f" (déjà rattaché à #{probe_of[i]} : indique seulement s'il apporte un fait nouveau)"
         lines.append(f"[{i}] {a['domain']}{extra} | {a['title_guess']} | {a['snippet']}")
-    return f"HISTOIRES DÉJÀ SUIVIES :\n{known}\n\nNOUVEAUX ARTICLES :\n" + "\n".join(lines)
+    tags = ", ".join(f"{k['tag']} ({k['n_threads']})" for k in known_tags or []) or "(aucun)"
+    return (f"SUJETS DÉJÀ UTILISÉS CETTE SEMAINE :\n{tags}\n\n"
+            f"HISTOIRES DÉJÀ SUIVIES :\n{known}\n\nNOUVEAUX ARTICLES :\n" + "\n".join(lines))
 
 
 def ask_claude(prompt: str) -> tuple[list[dict], dict]:
@@ -329,6 +344,16 @@ def ask_claude(prompt: str) -> tuple[list[dict], dict]:
     return json.loads(text)["groups"], usage
 
 
+def clean_tags(tags: list[str]) -> list[str]:
+    """Minuscules, espaces normalisés, sans doublon, sans catégorie ni sujet trop long."""
+    out = []
+    for t in tags:
+        t = re.sub(r"\s+", " ", str(t)).strip(" .,;:«»\"'").lower()
+        if 2 <= len(t) <= 40 and t not in out and t not in CATEGORIES:
+            out.append(t)
+    return out[:MAX_TAGS]
+
+
 def build_groups(raw: list[dict], articles: list[dict], threads: list[dict]) -> list[dict]:
     """Valide la réponse : identifiants connus, chaque article dans un seul groupe."""
     known_ids = {t["id"] for t in threads}
@@ -354,6 +379,7 @@ def build_groups(raw: list[dict], articles: list[dict], threads: list[dict]) -> 
             "summary": summary if not thread_id else "",   # le résumé d'une histoire suivie n'est jamais réécrit
             "update": update if thread_id else "",
             "category": g["category"],
+            "tags": clean_tags(g.get("tags") or []),
             "members": members,
         })
     return groups
@@ -375,8 +401,9 @@ def merge_auto(groups: list[dict], auto: dict[int, list[int]], articles: list[di
     for tid, ks in auto.items():
         g = by_thread.get(tid)
         if g is None:
+            # tags vides : la base conserve les sujets de l'histoire
             g = {"thread_id": tid, "title": "", "summary": "", "update": "", "category": category.get(tid, "autre"),
-                 "members": [], "auto": True}
+                 "tags": [], "members": [], "auto": True}
             groups.append(g)
             by_thread[tid] = g
         present = {m["url"] for m in g["members"]}
@@ -477,7 +504,12 @@ def main() -> int:
     log(f"Embeddings : {n_auto} article(s) rattaché(s) automatiquement à {len(routing['auto'])} histoire(s), "
         f"{len(prompt_articles)} envoyé(s) à Claude (dont {len(probe_of)} sonde(s)), "
         f"{len(routing['threads'])}/{len(threads)} histoires proposées")
-    prompt = build_prompt(prompt_articles, routing["threads"], probe_of)
+    try:
+        known_tags = rpc(http, "week_topics", {"days": 7, "lim": KNOWN_TAGS, "min_threads": 1})
+    except RuntimeError as e:   # base pas encore migrée : on continue sans sujets connus
+        log(f"Sujets de la semaine indisponibles : {e}")
+        known_tags = []
+    prompt = build_prompt(prompt_articles, routing["threads"], probe_of, known_tags)
 
     if DRY_RUN:
         log(f"DRY_RUN : prompt de {len(prompt):,} caractères. Aperçu :\n{prompt[:2500]}")
@@ -518,7 +550,8 @@ def main() -> int:
             how = " [auto]" if g.get("auto") else ""
             log(f"  + #{g['thread_id']}{how} ← {n} article(s) : {titles[g['thread_id']]}{changed}{evo}")
         else:
-            log(f"  * nouvelle ← {n} article(s) : {g['title']}")
+            tags = f" [{', '.join(g['tags'])}]" if g["tags"] else ""
+            log(f"  * nouvelle ← {n} article(s) : {g['title']}{tags}")
     return 0
 
 

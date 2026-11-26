@@ -22,6 +22,8 @@ GitHub Actions (toutes les 15 min)                Supabase (Postgres)           
 - Seuls de courts extraits (320 caractères) sont stockés, et ils ne sont pas exposés publiquement.
 - **Rien n'est écrasé** : chaque titre et résumé est conservé dans `thread_versions` (trigger sur `threads`). Le site affiche l'historique des versions.
 - **Site** : « En ce moment » (rpc `top_stories`, 10 histoires) puis le fil complet de toutes les histoires (rpc `feed`, pagination par curseur, défilement infini). Le rafraîchissement automatique ne touche pas au fil : un bouton signale les histoires mises à jour.
+- **Rubriques et sujets** : Claude attribue à chaque histoire une catégorie et 1 à 3 sujets de fond (`threads.tags`, par exemple « droits de douane »), en réutilisant à l'identique les sujets déjà employés dans la semaine, qui lui sont rappelés. « Sujets de la semaine » (rpc `week_topics`) liste les sujets portés par au moins deux histoires sur 7 jours. `top_stories` et `feed` acceptent les filtres facultatifs `cat` et `tag`, repris dans l'adresse du site (`?cat=économie`, `?tag=droits de douane`).
+- Migrations SQL récentes : `supabase/migrations/`.
 - Un seul appel à Claude par passage : tous les nouveaux articles de la fenêtre (jusqu'à 400) et les histoires actives sont envoyés ensemble.
 - Les tables `stories` / `story_articles`, la vue `latest_stories` et la fonction `trending` (utilisée par `top_stories`) datent des premières versions ; les deux premières ne sont plus alimentées.
 
