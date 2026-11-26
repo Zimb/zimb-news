@@ -1,0 +1,50 @@
+name: worker-cron
+
+on:
+  schedule:
+    # GitHub décale souvent les lancements planifiés de 10 à 20 min : on vérifie toutes les 5 min.
+    # Un passage sans nouveau fichier GDELT s'arrête en quelques secondes, sans appeler Claude.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - run: pip install -r worker/requirements.txt
+
+      - name: Cache du modèle d'embeddings
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2
+
+      - name: Regrouper et résumer le dernier quart d'heure
+        run: python worker/worker.py
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          CLAUDE_EFFORT: ${{ vars.CLAUDE_EFFORT }}
+          WINDOW_MINUTES: ${{ vars.WINDOW_MINUTES }}
+          ACTIVE_HOURS: ${{ vars.ACTIVE_HOURS }}
+          AUTO_ATTACH: ${{ vars.AUTO_ATTACH }}
+          EMBED_CACHE: .cache/fastembed
