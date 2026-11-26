@@ -13,7 +13,7 @@
   (function () {
     var q = new URLSearchParams(location.search).get("skin"), s = null;
     try { s = localStorage.getItem("skin"); } catch (e) {}
-    document.documentElement.dataset.skin = (q === "journal" || q === "classic") ? q : (s === "journal" ? "journal" : "classic");
+    document.documentElement.dataset.skin = (q === "journal" || q === "classic") ? q : (s === "classic" ? "classic" : "journal");
   })();
 </script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23c2410c'/><path d='M9 10h14L9 22h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
@@ -104,6 +104,28 @@
     font: 600 14px/1.2 inherit; cursor: pointer; box-shadow: 0 4px 16px #0003;
   }
   .fresh.show { display: block; }
+  /* Filtres : rubriques, sujets de la semaine, mots-clés des cartes */
+  .lede { margin-bottom: 16px; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 26px; }
+  .chip {
+    border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+    border-radius: 999px; padding: 3px 11px; font: 500 13px/1.4 inherit; cursor: pointer;
+  }
+  .chip:hover { color: var(--text); }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .week { margin: 0 0 30px; }
+  .week[hidden], .active-filter[hidden] { display: none; }
+  .week .section-title { margin-top: 0; }
+  .topics { display: flex; gap: 8px; flex-wrap: wrap; }
+  .topic .n { font-size: 12px; opacity: 0.75; margin-left: 6px; }
+  .active-filter { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 0 0 18px; font-size: 14px; color: var(--muted); }
+  .linkish { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+  button.cat { border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+  button.cat:hover { text-decoration: underline; }
+  .since { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .tag { border: 0; background: var(--chip); color: var(--muted); border-radius: 6px; padding: 0 7px; font: 12px/1.6 inherit; cursor: pointer; }
+  .tag::before { content: "#"; opacity: 0.6; }
+  .tag:hover { color: var(--text); }
   footer { margin-top: 40px; color: var(--muted); font-size: 13px; line-height: 1.6; }
   footer a { color: inherit; }
   @media (max-width: 520px) {
@@ -241,6 +263,17 @@
   html[data-skin="journal"] footer {
     text-align: center; font-style: italic; border-top: 3px double var(--line); padding-top: 14px; max-width: 820px; margin: 44px auto 0;
   }
+  html[data-skin="journal"] .filters, html[data-skin="journal"] .topics, html[data-skin="journal"] .active-filter { justify-content: center; }
+  html[data-skin="journal"] .chip {
+    border-radius: 0; background: transparent; color: var(--text); border: 1px solid rgba(29, 23, 18, 0.5);
+    font: 700 11px/1.5 "Old Standard TT", serif; text-transform: uppercase; letter-spacing: 0.14em; padding: 2px 9px;
+  }
+  html[data-skin="journal"] .chip[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: #efe6d0; }
+  html[data-skin="journal"] .topic { font: italic 14px/1.4 "Old Standard TT", serif; text-transform: none; letter-spacing: 0.02em; }
+  html[data-skin="journal"] .active-filter { font-style: italic; }
+  html[data-skin="journal"] button.cat { background: transparent; }
+  html[data-skin="journal"] .tag { background: transparent; border-radius: 0; padding: 0; font: italic 12.5px/1.5 "Old Standard TT", serif; }
+  html[data-skin="journal"] #top .story:first-child .since { justify-content: center; }
   @media (max-width: 600px) {
     html[data-skin="journal"] .wrap { padding: 20px 16px 56px; }
     html[data-skin="journal"] .dateline { justify-content: center; }
@@ -261,6 +294,14 @@
     </div>
   </header>
   <p class="lede">Les histoires dont la presse francophone parle le plus, suivies et résumées par IA. Mis à jour toutes les 15 minutes.</p>
+  <nav class="filters" id="filters" aria-label="Rubriques"></nav>
+
+  <section class="week" id="week" hidden>
+    <h2 class="section-title"><span id="t-week">Sujets de la semaine</span><span>reviennent d'une histoire à l'autre</span></h2>
+    <div class="topics" id="topics"></div>
+  </section>
+
+  <div class="active-filter" id="active" hidden></div>
 
   <h2 class="section-title"><span id="t-top">En ce moment</span><span>3 dernières heures</span></h2>
   <ol id="top" aria-live="polite">
@@ -343,12 +384,13 @@
     return `
       <li class="story${compact ? " compact" : ""}" data-id="${s.id}">
         ${rank !== null ? `<div class="rank">${rank}</div>` : ""}
-        <div class="meta"><span class="cat">${esc(s.category)}</span>${badge}
+        <div class="meta"><button class="cat" type="button" data-cat="${esc(s.category)}" title="Voir la rubrique">${esc(s.category)}</button>${badge}
           <span>${counts} · ${plural(s.n_articles_total, "article")}</span></div>
         <h2>${esc(s.title)}</h2>
         <p class="summary">${esc(s.summary)}</p>
         <div class="evo" data-evo="${s.id}"></div>
-        <div class="since">${since}</div>
+        <div class="since"><span>${since}</span>${(s.tags || []).map((t) =>
+          `<button class="tag" type="button" data-tag="${esc(t)}" title="Toutes les histoires sur ce sujet">${esc(t)}</button>`).join("")}</div>
         <div class="more">
           <details><summary>${plural(sources.length, "source")}</summary>
             <ul class="sources">${sources.map((a) => `
@@ -392,6 +434,7 @@
 
   // ---------------------------------------------------------------- En ce moment
   let topIds = new Set();
+  let gen = 0;   // incrémenté à chaque changement de filtre : les réponses en retard sont ignorées
 
   // Les histoires de « En ce moment » ne sont pas répétées dans « Autres histoires »
   function syncTopWithFeed(newIds) {
@@ -411,11 +454,13 @@
   }
 
   async function loadTop() {
+    const my = gen;
     try {
       const [rows, runs] = await Promise.all([
-        api(`rpc/top_stories?hours=${HOURS}&lim=${TOP}`),
+        api(`rpc/top_stories?hours=${HOURS}&lim=${TOP}${filterQS()}`),
         api(`runs?select=finished_at,window_end&status=in.(ok,no_data)&order=id.desc&limit=1`).catch(() => []),
       ]);
+      if (my !== gen) return;   // le filtre a changé pendant le chargement
       const run = runs[0];
       if (run) {
         const updated = new Date(run.finished_at);
@@ -427,11 +472,14 @@
       if (open && $top.querySelector(".story")) return;
       $top.innerHTML = rows.length
         ? rows.map((s, i) => card(s, { rank: i + 1 })).join("")
-        : `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
+        : filtered()
+          ? `<li class="empty">Aucune histoire de ce filtre parmi les plus suivies des ${HOURS} dernières heures. Les plus anciennes sont plus bas.</li>`
+          : `<li class="empty">Aucune histoire sur les ${HOURS} dernières heures pour le moment.</li>`;
       syncTopWithFeed(new Set(rows.map((s) => s.id)));
       loadUpdates($top);
     } catch (e) {
       console.error(e);
+      if (my !== gen) return;
       if (!$top.querySelector(".story")) $top.innerHTML = `<li class="error">Impossible de charger les histoires pour le moment.</li>`;
       $status.innerHTML = `<span class="dot stale"></span><span>Connexion impossible</span>`;
     }
@@ -463,13 +511,15 @@
   async function loadMore() {
     if (loading || done) return;
     loading = true;
+    const my = gen;
     let ok = false;
     $loader.textContent = "Chargement…";
     try {
       const q = cursor
-        ? `rpc/feed?lim=${PAGE}&before_ts=${encodeURIComponent(cursor.ts)}&before_id=${cursor.id}`
-        : `rpc/feed?lim=${PAGE}`;
+        ? `rpc/feed?lim=${PAGE}&before_ts=${encodeURIComponent(cursor.ts)}&before_id=${cursor.id}${filterQS()}`
+        : `rpc/feed?lim=${PAGE}${filterQS()}`;
       const rows = await api(q);
+      if (my !== gen) return;   // le filtre a changé : résultat périmé
       if (!cursor && rows[0]) newestSeen = rows[0].last_seen;
       if (rows.length) {
         const last = rows[rows.length - 1];
@@ -479,17 +529,19 @@
       }
       if (rows.length < PAGE) {
         done = true;
-        $loader.textContent = seen.size ? "Vous êtes arrivé au début du fil." : "";
+        $loader.textContent = seen.size ? "Vous êtes arrivé au début du fil."
+          : filtered() ? "Aucune autre histoire pour ce filtre." : "";
       } else {
         $loader.textContent = "";
       }
       ok = true;
     } catch (e) {
       console.error(e);
-      $loader.textContent = "Chargement impossible, nouvel essai en descendant.";
+      if (my === gen) $loader.textContent = "Chargement impossible, nouvel essai en descendant.";
     } finally {
-      loading = false;
+      if (my === gen) loading = false;
     }
+    if (my !== gen) return;
     // Si la page n'a rien ajouté de visible (histoires déjà dans « En ce moment »), on enchaîne
     const nearBottom = $("sentinel").getBoundingClientRect().top < window.innerHeight + 800;
     if (ok && !done && nearBottom) setTimeout(loadMore, 0);
@@ -499,7 +551,9 @@
   async function checkFresh() {
     if (!newestSeen) return;
     try {
-      const rows = await api(`rpc/feed?lim=50`);
+      const my = gen;
+      const rows = await api(`rpc/feed?lim=50${filterQS()}`);
+      if (my !== gen) return;
       const n = rows.filter((s) => s.last_seen > newestSeen && !topIds.has(s.id)).length;
       if (n) {
         $fresh.textContent = `${plural(n, "histoire")} mise${n > 1 ? "s" : ""} à jour · afficher`;
@@ -508,12 +562,76 @@
     } catch { /* on réessaiera au prochain cycle */ }
   }
 
-  $fresh.addEventListener("click", () => {
-    $fresh.classList.remove("show");
-    cursor = null; done = false; newestSeen = null; seen.clear(); days.clear();
+  function resetFeed() {
+    gen++;
+    cursor = null; done = false; loading = false; newestSeen = null; seen.clear(); days.clear();
     $feed.innerHTML = "";
+    $loader.textContent = "";
+    $fresh.classList.remove("show");
+  }
+
+  $fresh.addEventListener("click", () => {
+    resetFeed();
     loadMore();
     $feed.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // ---------------------------------------------------------------- Filtres : rubrique et sujet
+  const CATEGORIES = ["politique", "international", "économie", "société", "faits divers",
+                      "sport", "culture", "sciences et tech", "santé", "environnement"];
+  const params = new URLSearchParams(location.search);
+  const filter = {
+    cat: CATEGORIES.includes(params.get("cat")) ? params.get("cat") : null,
+    tag: (params.get("tag") || "").trim().toLowerCase() || null,
+  };
+  const filtered = () => Boolean(filter.cat || filter.tag);
+  const filterQS = () => (filter.cat ? `&cat=${encodeURIComponent(filter.cat)}` : "")
+                       + (filter.tag ? `&tag=${encodeURIComponent(filter.tag)}` : "");
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  function renderFilters() {
+    $("filters").innerHTML = [null, ...CATEGORIES].map((c) =>
+      `<button class="chip" type="button" data-cat="${esc(c ?? "")}" aria-pressed="${filter.cat === c}">${c ? esc(cap(c)) : "Toutes les rubriques"}</button>`).join("");
+    $("topics").querySelectorAll("[data-tag]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tag === filter.tag)));
+    const parts = [filter.cat && `rubrique « ${esc(filter.cat)} »`, filter.tag && `sujet « ${esc(filter.tag)} »`].filter(Boolean);
+    $("active").hidden = !parts.length;
+    $("active").innerHTML = parts.length
+      ? `<span>Filtré : ${parts.join(" · ")}</span><button class="linkish" type="button" data-clear>Tout afficher</button>` : "";
+  }
+
+  function setFilter(next) {
+    Object.assign(filter, next);
+    const u = new URL(location.href);
+    for (const k of ["cat", "tag"]) filter[k] ? u.searchParams.set(k, filter[k]) : u.searchParams.delete(k);
+    history.replaceState(null, "", u);
+    renderFilters();
+    resetFeed();
+    topIds = new Set();
+    $top.innerHTML = `<li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>`;
+    loadTop().finally(loadMore);
+  }
+
+  async function loadWeek() {
+    try {
+      const rows = await api(`rpc/week_topics?days=7&lim=14`);
+      $("topics").innerHTML = rows.map((t) => `
+        <button class="chip topic" type="button" data-tag="${esc(t.tag)}" aria-pressed="${t.tag === filter.tag}"
+                title="${esc((t.categories || []).join(", "))}">${esc(t.tag)}<span class="n">${plural(t.n_threads, "histoire")}${t.n_days > 1 ? ` · ${t.n_days} jours` : ""}</span></button>`).join("");
+      $("week").hidden = !rows.length;
+    } catch { /* section masquée */ }
+  }
+
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cat], [data-tag], [data-clear]");
+    if (!b) return;
+    const fromCard = Boolean(b.closest(".story"));
+    if (b.hasAttribute("data-clear")) setFilter({ cat: null, tag: null });
+    else if (b.dataset.tag !== undefined) setFilter({ tag: filter.tag === b.dataset.tag ? null : b.dataset.tag });
+    else {
+      const c = b.dataset.cat || null;
+      setFilter({ cat: filter.cat === c && fromCard === false ? null : c });
+    }
+    if (fromCard) $("filters").scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
   // ---------------------------------------------------------------- Skin « vieux journal » (three.js)
@@ -660,8 +778,8 @@
   function stopPaper() { if (paper) { paper.stop(); paper = null; } }
 
   const LABELS = {
-    classic: { top: "En ce moment", feed: "Autres histoires", button: "🗞 Version journal" },
-    journal: { top: "À LA UNE", feed: "BRÈVES & ARCHIVES", button: "Version moderne" },
+    classic: { top: "En ce moment", feed: "Autres histoires", week: "Sujets de la semaine", button: "🗞 Version journal" },
+    journal: { top: "À LA UNE", feed: "BRÈVES & ARCHIVES", week: "LES DOSSIERS DE LA SEMAINE", button: "Version moderne" },
   };
 
   function applySkin(name) {
@@ -670,6 +788,7 @@
     const l = LABELS[name];
     $("t-top").textContent = l.top;
     $("t-feed").textContent = l.feed;
+    $("t-week").textContent = l.week;
     $("skin").textContent = l.button;
     const edition = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
     $("edition").textContent = `Édition du ${edition}`;
@@ -681,6 +800,8 @@
   });
   applySkin(document.documentElement.dataset.skin === "journal" ? "journal" : "classic");
 
+  renderFilters();
+  loadWeek().then(renderFilters);
   // Le fil attend le classement, pour savoir quelles histoires exclure
   loadTop().finally(() => {
     loadMore();
@@ -688,7 +809,7 @@
       if (entries.some((e) => e.isIntersecting)) loadMore();
     }, { rootMargin: "800px 0px" }).observe($("sentinel"));
   });
-  setInterval(() => { loadTop(); checkFresh(); }, REFRESH_MS);
+  setInterval(() => { loadTop(); checkFresh(); loadWeek(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadTop(); checkFresh(); } });
 </script>
 </body>
